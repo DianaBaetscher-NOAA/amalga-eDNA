@@ -1,0 +1,75 @@
+---
+title: "qPCR analysis"
+output: html_notebook
+---
+
+9 December 2021
+
+
+Organizing the initial qPCR results from the Amalga Harbor eDNA study in this updated R project.
+
+Samples were taken at incoming and outgoing tide, every 80 m from the chum pens (DIPAC) perpendicular to the channel up to 2 km.
+
+PM is outgoing tide; AM is incoming tide:
+https://www.usharbors.com/harbor/alaska/juneau-ak/tides/?tide=2021-05#monthly-tide-chart
+
+High tide is at 1:35 PM (14.8 ft)
+Low tide is at 7:20 AM (-0.8 ft)
+
+There are field replicates (3x per location per time [AM/PM]) and qPCR replicates (3x).
+
+
+For the analysis, I want to check for outliers and then compare the correlation between distance from the chum pens and DNA copy number or quantity between the incoming and outgoing tides.
+
+
+
+
+```{r load-packages}
+library(tidyverse)
+library(readxl)
+
+```
+
+
+```{r load-data}
+# read in the extraction database metadata
+meta <- read_xlsx("~/eDNA/extraction_database.xlsx", sheet = "metadata")
+
+# read in the combined qPCR results
+qpcr <- read_xlsx("~/eDNA/Amalga_study/qPCR_results_combined.xlsx")
+
+```
+
+
+### Metadata QC
+
+```{r meta-qc}
+# clean up the metadata format and variable names
+frsh_meta <- meta %>%
+  mutate(tide = ifelse(`Sample Code` == "AM", "incoming", "outgoing")) %>%
+  mutate(tide = ifelse(is.na(`Sample Code`) | `Sample Code` == "Creek", NA, tide)) %>%
+  rename(sample = `Extraction ID`, location = `Sample Code`, label = `Sample Label`, type = `Sample_type`) %>%
+  # distance needs to be a numeric variable without meters attached
+  mutate(dist_grp = ifelse(location %in% c("PM", "AM"), label, NA))
+
+# strip off the meters on dist_grp so we can order them properly
+frsh_meta$dist_grp <- gsub("[^0-9.-]", "", frsh_meta$dist_grp)
+
+# make another variable that is numeric distance (not character)
+clean_meta <- frsh_meta %>%
+  mutate(distance = as.numeric(dist_grp)) %>%
+  # remove some of the unneeded variables
+  select(sample, location, label, type, tide, dist_grp, distance) %>%
+  # add info to the creek samples
+  mutate(label = ifelse(location == "Creek", "freshwater", label)) %>%
+  mutate(label = ifelse(is.na(location), "blank", label))
+
+
+```
+
+
+### QC the qPCR data
+
+
+
+
