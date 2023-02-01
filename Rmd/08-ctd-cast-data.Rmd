@@ -105,11 +105,13 @@ ctd.w.tides.dist %>%
 ggsave("pdf_outputs/ctdSimpleLatLon.pdf")
 
 ```
+
+
+
 Output that dataframe so that I can plot the transect on the bathy map
 ```{r}
 ctd.w.tides.dist %>%
   write_csv("csv_outputs/ctdDataframe.csv")
-
 
 ```
 

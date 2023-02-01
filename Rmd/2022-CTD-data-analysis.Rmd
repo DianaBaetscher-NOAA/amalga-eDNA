@@ -61,9 +61,14 @@ ctd.depth <- ctd.w.tides %>%
   mutate(depth = depth_m *-1)
 ```
 
+
+Output that dataframe so that I can plot the transect on the bathy map
 ```{r}
+ctd.depth %>%
+  write_csv("csv_outputs/2022ctdDataframe.csv")
 
 ```
+
 
 
 Look at those data...
@@ -341,9 +346,6 @@ plot.ctd <- function(sample){
 ```{r}
 lapply(sample_nums, plot.ctd)
 ```
-
-
-
 
 
 
