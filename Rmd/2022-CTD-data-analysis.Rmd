@@ -1,0 +1,363 @@
+---
+title: "2022 CTD data"
+output: html_notebook
+---
+
+13 November 2022
+
+Quick analysis of CTD data...
+
+
+```{r load-libraries}
+library(tidyr)
+library(readr)
+library(stringr)
+library(lubridate)
+library(hms)
+library(dplyr)
+library(ggplot2)
+library(ggtext)
+
+```
+
+
+```{r read-in-csv-files}
+# read in all files in the reheaded directory
+dataFiles <- lapply(Sys.glob("../data/reheaded/*.csv"), read_csv)
+
+
+# turn each of the data frames in that list into a single data frame
+ctd.data <- do.call("rbind", dataFiles)
+
+
+```
+
+
+```{r data-clean-up}
+# organize the headers, etc.
+ctd.data2 <- ctd.data %>%
+  rename(pressure_decibar = `Pressure (Decibar)`, depth_m = `Depth (Meter)`, temp_c = `Temperature (Celsius)`, conductivity = `Conductivity (MicroSiemens per Centimeter)`, sp_conduct = `Specific conductance (MicroSiemens per Centimeter)`, salinity = `Salinity (Practical Salinity Scale)`, sound_velocity = `Sound velocity (Meters per Second)`, density = `Density (Kilograms per Cubic Meter)`, file = `% File name`, lat = `% Start latitude`, long = `% Start longitude`, duration = `% Cast duration (Seconds)`, time = `% Cast time (local)`) %>%
+  separate(file, into = c(NA, NA, "ctd_sample"), sep = "_") %>%
+  select(ctd_sample, time, lat, long, depth_m, salinity, density, pressure_decibar, temp_c, conductivity, sp_conduct, sound_velocity, duration)
+
+
+# add tide info
+ctd.w.tides <- ctd.data2 %>%
+  mutate(tide = ifelse(hour(hms::as_hms(time)) >12, "PM_incoming", "AM_outgoing")) %>%
+    mutate(tide = ifelse(day(ymd_hms(time)) == "10", "PM_incoming", tide)) %>%
+      mutate(tide = ifelse(day(ymd_hms(time)) == "25", "AM_incoming", tide))
+  
+
+ctd.w.tides %>%
+  select(lat) %>%
+  unique() %>%
+  arrange(lat)
+
+```
+
+
+```{r}
+ctd.depth <- ctd.w.tides %>%
+  mutate(depth = depth_m *-1)
+```
+
+```{r}
+
+```
+
+
+Look at those data...
+
+```{r}
+library(ggrepel)
+# maybe filter by date first
+ctd.w.tides %>%
+  filter(day(ymd_hms(time)) == "5") %>%
+  select(ctd_sample, lat, long) %>%
+  unique() %>%
+  ggplot() +
+  geom_point(aes(x = long, y = lat)) +
+  geom_text_repel(aes(x = long, y = lat, label = ctd_sample))
+
+```
+
+Best way to connect ctd data (ctd_sample) to distance from pens via lat/lon?
+
+```{r}
+ctd.grp.df <- ctd.w.tides %>%
+  #filter(day(ymd_hms(time)) == "25") %>%
+  select(ctd_sample, lat, long, time) %>%
+  unique() %>%
+  arrange(time) %>%
+  # round the lat/lon and then group by both lat/lon
+  mutate(lat_r = round(lat, digits = 3)) %>%
+  mutate(lon_r = round(long, digits = 3)) %>%
+  group_by(lat_r, lon_r) %>%
+  mutate(grp_id = cur_group_id()) %>% # add a group id for each lat/lon
+  mutate(grp_id = ifelse(grp_id == 9, 7, grp_id)) %>%
+  mutate(grp_id = ifelse(grp_id == 10, 8, grp_id)) %>%
+  mutate(grp_id = ifelse(grp_id == 11, 9, grp_id)) %>%
+  mutate(grp_id = ifelse(grp_id == 12, 10, grp_id))  
+
+ctd.grp.df$grp_id <- as.character(ctd.grp.df$grp_id)
+  
+ctd.grp.df %>%
+  ggplot() +
+  geom_point(aes(x = long, y = lat, color = grp_id), size = 2) +
+  geom_text_repel(aes(x = long, y = lat, label = ctd_sample)) +
+  theme_minimal() +
+  labs(
+    x = "Longitude",
+    y = "Latitude",
+    title = "May 2022 - CTD samples"
+  )
+  
+#ggsave("pdf_outputs/2022_Amalga_ctd_sample_locationsMay25.pdf", width = 8, height = 6)
+```
+But that only includes data from May 5, rather than all of the dates.
+
+```{r}
+tmp <- ctd.w.tides %>%
+  #filter(day(ymd_hms(time)) == "5") %>%
+  select(ctd_sample, lat, long, time) %>%
+  unique() %>%
+  arrange(time) %>%
+  # round the lat/lon and then group by both lat/lon
+  mutate(lat_r = round(lat, digits = 3)) %>%
+  mutate(lon_r = round(long, digits = 2)) %>%
+  group_by(lat_r, lon_r) %>%
+   mutate(grp_id = cur_group_id()) %>%
+  mutate(day = day(ymd_hms(time)))
+  
+
+tmp$grp_id <- as.character(tmp$grp_id)
+tmp$day <- as.character(tmp$day)
+
+tmp %>% # add a group id for each lat/lon
+  mutate()
+  filter(grp_id %in% c(11,6,7,9)) %>%
+  ggplot() +
+  geom_point(aes(x = long, y = lat, color = grp_id), size = 2) +
+  #geom_text_repel(aes(x = long, y = lat, label = ctd_sample)) +
+  theme_bw()
+
+```
+
+
+Thinking about these as spatial data points
+
+
+Help from Pat...
+
+```{r}
+library(geosphere)
+
+```
+
+```{r}
+ctd.simple <- ctd.grp.df %>%
+  ungroup() %>%
+  select(ctd_sample, lat, long, time)
+```
+
+
+```{r}
+tmp <- geosphere::distm(x=cbind(ctd.grp.df$long, ctd.grp.df$lat),
+                     fun = distGeo)
+
+ctd.grp.df$ctd_sample
+
+dist.matrix <- as.data.frame(tmp)
+rownames <- ctd.grp.df$ctd_sample
+rownames(dist.matrix) <- rownames
+colnames(dist.matrix) <- rownames
+
+
+# change that back into a df
+dist.matrix %>%
+  add_rownames(., var = "ctd_sample") %>%
+  pivot_longer(2:43, names_to = "sample_num", values_to = "dist") %>% 
+  filter(dist > 0, 
+         dist < 100) %>% # remove comparisons from different stations
+  arrange(dist) %>%
+  # left_join(., ctd.simple) %>%
+  # left_join(., ctd.simple, by = c("sample_num"= "ctd_sample"))
+  mutate()
+
+#ideally, now I would have a fixed point and add the distance to that point.
+```
+
+
+
+
+
+
+
+
+
+
+
+
+Now I can associate the ctd_sample and grp_id numbers with the distance from pens
+```{r}
+ctd.grp.w.data <- ctd.grp.df %>%
+  left_join(., ctd.w.tides)
+
+```
+
+See next section with metadata...
+
+
+
+```{r}
+ctd.depth %>%
+  filter(ctd_sample == "183334") %>%
+  ggplot(aes(y = depth, x = salinity)) +
+  geom_point() +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+     axis.title.y = element_text(margin = margin(t=10))
+  ) +
+  labs(y = "Depth (m)",
+       title = "500 m NW from transect, AM")
+
+```
+
+```{r}
+ctd.samples <- ctd.depth %>%
+  select(ctd_sample) %>%
+  unique()
+
+x <- as.list(ctd.samples)
+sample_nums <- x$ctd_sample
+```
+
+
+```{r}
+plot.ctd <- function(sample, density){
+  ctd.depth %>%
+  filter(ctd_sample == sample) %>%
+  ggplot(aes(y = depth, x = salinity)) +
+  geom_point() +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+     axis.title.y = element_text(margin = margin(t=10))
+  ) +
+  labs(y = "Depth (m)",
+       title = paste0("CTD sample ",sample)) 
+}
+```
+
+```{r}
+lapply(sample_nums, plot.ctd)
+```
+
+
+
+
+
+
+## Convert longitude to meters from chum pens
+
+This will match the other plots in the series.
+
+My logic previously was that the stations were sampled in the same order in the AM and PM. That changed a bit with the parallel transect.
+Let's use the 5/5/2022 date as a first test case.
+
+```{r}
+meta <- read_csv("../data/2022_amalga_metadata_orderly.csv")
+
+dist <- meta %>%
+  filter(Sample_Date == "2022_05_05") %>%
+  arrange(distance_from_pens) %>%
+  select(distance_from_pens, transect, parallel_transect) %>%
+  unique() %>%
+  arrange(desc(transect), distance_from_pens)
+
+
+```
+
+groups:
+1 = B3, -1000m parallel
+2 = 2000m
+3 = B2, -500m parallel
+4 = background
+5 = 1500m
+6 = 1000m
+7 = 500m
+8 = T2, 500m parallel
+9 = 0m
+10 = T3, 1000m parallel
+
+
+
+```{r}
+# associate the grp id with the distance from pens
+meta.grps <- meta %>%
+  mutate(grp = ifelse(transect == "perpendicular" & distance_from_pens == 2000, 2, NA)) %>%
+    mutate(grp = ifelse(transect == "perpendicular" & distance_from_pens == "1500", 5, grp)) %>%
+    mutate(grp = ifelse(transect == "perpendicular" & distance_from_pens == "1000", 6, grp)) %>%
+    mutate(grp = ifelse(transect == "perpendicular" & distance_from_pens == "500", 7, grp)) %>%
+      mutate(grp = ifelse(transect == "perpendicular" & distance_from_pens == "0", 9, grp)) %>%
+      mutate(grp = ifelse(transect != "perpendicular" & parallel_transect == "-1000", 1, grp)) %>%
+        mutate(grp = ifelse(transect != "perpendicular" & parallel_transect == "-500", 3, grp)) %>%
+          mutate(grp = ifelse(transect != "perpendicular" & parallel_transect == "500", 8, grp)) %>%
+            mutate(grp = ifelse(transect != "perpendicular" & parallel_transect == "1000", 10, grp)) %>%
+              mutate(grp = ifelse(transect != "perpendicular" & transect == "background", 4, grp)) 
+
+meta.grps$grp <- as.character(meta.grps$grp)
+```
+
+
+```{r}
+# combine the ctd data and the metadata
+meta.ctd.df <- ctd.grp.w.data %>%
+  left_join(., meta.grps, by = c("grp_id" = "grp")) %>%
+  rename(sample_code = `Sample Code`)
+
+```
+
+
+
+
+```{r}
+plot.ctd <- function(sample){
+  ctd.grp.w.data %>%
+  filter(ctd_sample == sample) %>%
+  ggplot(aes(y = depth_m, x = salinity)) +
+  geom_point() +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+     axis.title.y = element_text(margin = margin(t=10))
+  ) +
+  labs(y = "Depth (m)",
+       title = paste0("CTD sample ",sample)) 
+}
+```
+
+```{r}
+lapply(sample_nums, plot.ctd)
+```
+
+
+
+
+
+
+```{r}
+# each cast (ctd_sample) represents one of the 80m sampling intervals
+ctd.w.dist <- ctd.w.tides %>%
+  arrange(time) %>%
+  select(time) %>%
+  unique() %>%
+  mutate(id = row_number()) %>%
+  bind_cols(dist2x)
+
+# bind it back together
+ctd.w.tides.dist <- ctd.w.tides %>%
+  left_join(., ctd.w.dist)
+  
+```

@@ -1,0 +1,382 @@
+---
+title: "08-ctd-cast-data"
+output: html_notebook
+---
+
+12 February 2022
+
+CTD casts from eDNA sampling off the Sashin on 10 May, 2021.
+
+```{r load-libraries}
+library(tidyr)
+library(readr)
+library(stringr)
+library(lubridate)
+library(hms)
+library(dplyr)
+library(ggplot2)
+
+```
+
+```{r read-in-csv-files}
+# read in all files in the reheaded directory
+dataFiles <- lapply(Sys.glob("CTDCasts/reheaded/*.csv"), read_csv)
+
+# turn each of the data frames in that list into a single data frame
+ctd.data <- do.call("rbind", dataFiles)
+
+
+```
+
+
+```{r data-clean-up}
+# organize the headers, etc.
+ctd.data2 <- ctd.data %>%
+  rename(pressure_decibar = `Pressure (Decibar)`, depth_m = `Depth (Meter)`, temp_c = `Temperature (Celsius)`, conductivity = `Conductivity (MicroSiemens per Centimeter)`, sp_conduct = `Specific conductance (MicroSiemens per Centimeter)`, salinity = `Salinity (Practical Salinity Scale)`, sound_velocity = `Sound velocity (Meters per Second)`, density = `Density (Kilograms per Cubic Meter)`, file = `% File name`, lat = `% Start latitude`, long = `% Start longitude`, duration = `% Cast duration (Seconds)`, time = `% Cast time (local)`) %>%
+  separate(file, into = c(NA, NA, "ctd_sample"), sep = "_") %>%
+  select(ctd_sample, time, lat, long, depth_m, salinity, density, pressure_decibar, temp_c, conductivity, sp_conduct, sound_velocity, duration)
+
+
+# add tide info
+ctd.w.tides <- ctd.data2 %>%
+  mutate(tide = ifelse(hour(hms::as_hms(time)) >12, "PM_outgoing", "AM_incoming"))
+
+ctd.w.tides %>%
+  select(lat) %>%
+  unique() %>%
+  arrange(lat)
+
+```
+
+
+
+## Convert longitude to meters from chum pens
+
+This will match the other plots in the series.
+```{r}
+meta <- read_csv("../metadata/amalga_clean_metadata.csv")
+
+dist <- meta %>%
+  filter(!is.na(distance)) %>%
+  arrange(distance) %>%
+  select(distance) %>%
+  unique()
+
+dist2x <- dist %>%
+  bind_rows(dist)
+```
+
+
+```{r}
+# each cast (ctd_sample) represents one of the 80m sampling intervals
+ctd.w.dist <- ctd.w.tides %>%
+  arrange(time) %>%
+  select(time) %>%
+  unique() %>%
+  mutate(id = row_number()) %>%
+  bind_cols(dist2x)
+
+# bind it back together
+ctd.w.tides.dist <- ctd.w.tides %>%
+  left_join(., ctd.w.dist)
+  
+```
+
+
+
+```{r}
+# QC: are the data what we think they are?
+ctd.w.tides.dist %>%
+    mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  ggplot(aes(x = long, y = lat, color = tide, linetype = tide, label = ctd_sample)) +
+ # geom_line() +
+  #geom_point(size = 0.1)+
+  geom_text(size = 2.5)+
+  facet_grid(rows = vars(tide)) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))
+  ) +
+  labs(y = "Latitude",
+       x = "Longitude") +
+  scale_color_manual(values = c("firebrick1", "midnightblue"))
+
+ggsave("pdf_outputs/ctdSimpleLatLon.pdf")
+
+```
+Output that dataframe so that I can plot the transect on the bathy map
+```{r}
+ctd.w.tides.dist %>%
+  write_csv("csv_outputs/ctdDataframe.csv")
+
+
+```
+
+
+
+Ultimately, turn this into a map of the transect rather than an x-y plot.
+
+## Plotting CTD profiles
+
+```{r}
+# salinity
+ctd.w.tides.dist %>%
+  filter(salinity > 20) %>%
+  mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  ggplot(aes(x = density, y = -1*(depth_m), color = distance)) +
+  geom_point() +
+  facet_grid(rows = vars(tide)) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))
+  ) +
+  labs(y = "Depth (m)",
+       x = "Density",
+       color = "Distance")
+  
+
+#ggsave("pdf_outputs/ctdSalinityProfile.pdf", width = 8, height = 5)
+```
+Salinity: zoomed in
+```{r}
+# temp
+ctd.w.tides.dist %>%
+    filter(salinity > 20) %>%
+  mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  filter(depth_m < 10) %>% # top three meters of the surface
+  ggplot(aes(x = density, y = -1*(depth_m), color = distance)) +
+  geom_point() +
+  facet_grid(rows = vars(tide)) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))) +
+  labs(y = "Depth (m)",
+       x = "Density (kg/m^3)",
+       color = "Distance (m)")
+
+#ggsave("pdf_outputs/ctdSalinityProfile5m.pdf", width = 8, height = 5)
+
+```
+
+# Plotting a surface with temperature and longitude
+
+https://github.com/cathmmitchell/plottingOceanDataWithR/wiki/Irregular-data
+
+```{r}
+binned <- ctd.w.tides.dist %>% 
+    mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  filter(depth_m < 10) %>%
+  mutate_at(5, round)%>% 
+  group_by(distance, tide, depth_m) %>% 
+  summarize(av_tmp = mean(temp_c))
+
+ggplot(binned,aes(x=distance,y=-1*(depth_m))) +
+  facet_grid(rows = vars(tide))+
+  geom_contour_filled(aes(z=av_tmp), alpha = 0.8) +
+    geom_point(size =0.1) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))) +
+  labs(y = "Depth (m)",
+       x = "Distance from hatchery pens (m)",
+       fill = "Temperature (C)")
+
+ggsave("pdf_outputs/ctdTemp10metersDistance.pdf", width = 8, height = 5)
+```
+Why do some of the top depth values drop out? Something about the binning.
+
+
+Do it once more, but setting the depth even shallower:
+
+```{r temp-binned-2}
+binned2 <- ctd.w.tides.dist %>% 
+    mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  filter(depth_m < 2.5) %>%
+  mutate_at(5, round, 2)%>% 
+  group_by(distance, tide, depth_m) %>% 
+  summarize(av_tmp = mean(temp_c))
+
+
+ggplot(binned2,aes(x=distance,y=-1*(depth_m))) +
+  facet_grid(rows = vars(tide))+
+  geom_contour_filled(aes(z=av_tmp), alpha = 0.8) +
+  geom_point(size =0.1) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))) +
+  labs(y = "Depth (m)",
+       x = "Distance from hatchery pens (m)",
+       fill = "Temperature (C)")
+
+ggsave("pdf_outputs/ctdTemp3metersDistance.pdf", width = 8, height = 5)
+```
+
+
+For salinity and temp, let's zoom in on the top 5 meters (we took samples from the first ~1 m)
+```{r}
+# temp
+ctd.w.tides.dist %>%
+  mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  filter(depth_m < 5) %>%
+  ggplot(aes(x = temp_c, y = -1*(depth_m), color = distance)) +
+  geom_point() +
+  facet_grid(rows = vars(tide)) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))) +
+  labs(y = "Depth (m)",
+       x = "Temperature (C)",
+       color = "Distance (m)")
+
+ggsave("pdf_outputs/ctdTempProfile3metersDistance.pdf", width = 8, height = 5)
+
+```
+
+### Plotting a surface with salinity and longitude
+
+
+```{r}
+binnedSalinity <- ctd.w.tides.dist %>% 
+    mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  filter(depth_m < 10) %>%
+  mutate_at(5, round)%>% 
+  group_by(distance, tide, depth_m) %>% 
+  summarize(av_salinity = mean(salinity))
+
+ggplot(binnedSalinity,aes(x=distance,y=-1*(depth_m))) +
+  facet_grid(rows = vars(tide))+
+  geom_contour_filled(aes(z=av_salinity), alpha = 0.8) +
+    geom_point(size =0.1) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))) +
+  labs(y = "Depth (m)",
+       x = "Distance from hatchery pens (m)",
+       fill = "Salinity (PSU)")
+
+ggsave("pdf_outputs/ctdSalinity10metersDistance.pdf", width = 8, height = 5)
+```
+
+```{r salinity-binned-2}
+binnedSal2 <- ctd.w.tides.dist %>% 
+    mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  filter(depth_m < 2.5) %>%
+  mutate_at(5, round, 2)%>% 
+  group_by(distance, tide, depth_m) %>% 
+  summarize(av_sal = mean(salinity))
+
+
+ggplot(binnedSal2,aes(x=distance,y=-1*(depth_m))) +
+  facet_grid(rows = vars(tide))+
+  geom_contour_filled(aes(z=av_sal), alpha = 0.8) +
+  geom_point(size =0.1) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))) +
+  labs(y = "Depth (m)",
+       x = "Distance from hatchery pens (m)",
+       fill = "Salinity (PSU)")
+
+ggsave("pdf_outputs/ctdSalinity3metersDistance.pdf", width = 8, height = 5)
+```
+
+
+Density
+
+```{r}
+density1 <- ctd.w.tides.dist %>% 
+  mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  filter(depth_m < 10) %>%
+  mutate_at(5, round)%>% 
+  group_by(distance, tide, depth_m) %>% 
+  summarize(av_density = mean(density)) # the avg needs to be taken for proper plotting in this way.
+
+ggplot(density1,aes(x=distance,y=-1*(depth_m))) +
+  facet_grid(rows = vars(tide))+
+  geom_contour_filled(aes(z=density), alpha = 0.8) +
+    geom_point(size =0.1) +
+  theme_bw()+
+   theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10))) +
+  labs(y = "Depth (m)",
+       x = "Distance from hatchery pens (m)",
+       fill = "Density (kg/m^3)")
+
+#ggsave("pdf_outputs/ctdTemp10metersDistance.pdf", width = 8, height = 5)
+```
+
+
+
+## Tide data
+
+Tide data was obtained from the NOAA Tides website: tidesandcurrents.noaa.gov
+
+https://tidesandcurrents.noaa.gov/waterlevels.html?id=9452210&units=standard&bdate=20210510&edate=20210511&timezone=LST/LDT&datum=MLLW&interval=6&action=
+```{r read-in-tide-data}
+tides <- read_csv("../data/tideData.csv",
+                  col_types = cols_only(Date=col_date("%m/%d/%Y"),
+                              `Time (LST/LDT)`=col_time("%H:%M"),
+                              `Verified (ft)`=col_double())) 
+# fix variable names
+tides.renamed <- tides %>%
+  rename(time = `Time (LST/LDT)`, height_ft = `Verified (ft)`)
+
+# create a merged column with date and time to then round to the hour as in the CTD data
+tides.renamed$newdate <- with(tides.renamed, as.POSIXct(paste(Date, time), format="%Y-%m-%d %H:%M:%S"))
+
+tides.hour <- tides.renamed %>%
+  mutate(round_time = round_date(newdate, unit = "hours")) %>% # round time stamps to the hour
+  separate(round_time, into = c("ymd", "hour"), sep = " ") %>%
+  mutate(hour = as_hms(hour)) 
+```
+Look at joining the tide data with the ctd data based on time
+
+```{r}
+# install.packages("devtools")
+# library(devtools)
+# devtools::install_github("ellisvalentiner/lubridateExtras")
+
+# from the ctd time stamp, I need to separate the date from the time
+ctd.w.tides.dist$time <- ymd_hms(ctd.w.tides.dist$time)
+
+
+ctd.times <- ctd.w.tides.dist %>%
+  mutate(round_time = round_date(time, unit = "hours")) %>% # round time stamps to the hour
+  separate(round_time, into = c("ymd", "hour"), sep = " ") %>%
+  mutate(hour = as_hms(hour)) 
+  
+
+
+tides.hour %>%
+  filter(Date == "2021-05-10") %>%
+  left_join(., ctd.times, by = "hour") %>%
+  ggplot(aes(x=newdate, y=height_ft, color = distance)) +
+  geom_point() +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10)),
+    legend.title = element_text(margin = margin(b=10))) +
+  labs(y = "Tide height (ft)",
+       x = "Date-time",
+       color = "Distance from hatchery pens (m)") +
+  scale_color_viridis_c(option = "plasma", direction = -1)
+  
+
+ggsave("pdf_outputs/tideCycleSampling.pdf", width = 8, height = 5)
+
+```
+
+
+
+
+

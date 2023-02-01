@@ -1,0 +1,418 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+14 December 2021
+
+First attempt at DADA2 analysis for the 12S Amalga samples using the NOAA Linux VM.
+
+
+```{r set-up}
+# set the working directory for this notebook and load packages
+
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install("dada2", version = "3.15")
+```
+
+
+```{r}
+library(dada2)
+library(dplyr)
+```
+
+
+
+```{r}
+path <- "../trimmed"
+list.files(path)
+```
+
+All I really want to do is visualize the data so that I can see what the read quality looks like and where I should trim the crummy bases.
+
+```{r}
+fnFs <- sort(list.files(path, pattern="_R1.fastq", full.names = TRUE))
+
+fnRs <- sort(list.files(path, pattern="_R2.fastq", full.names = TRUE))
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+```
+
+```{r}
+plotQualityProfile(fnFs[1:2])
+```
+Wow, those quality scores are awesome. Maybe just a little drop in quality at >60 bp.
+
+Look at R2
+```{r}
+plotQualityProfile(fnRs[1:2])
+```
+
+Fantastic quality up to 60 bp and then it decreases, but it's still around Q30.
+
+This makes me feel confident testing a couple of trimming schemes to see if it makes a difference. 
+1. Trim to 70 bp for R1 and 60 bp for R2 (for a total of 130 bp, but then subtracting 10 for the overlap [120 bp overall]).
+2. Maybe trim more conservatively if we're not losing samples because of issues with overlap.
+
+
+```{r}
+# Place filtered files in filtered/ subdirectory
+filtFs <- file.path("../filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path("../filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+# fFs <- file.path("../filtered",paste0(sample.names,"_F_filt.fastq.gz"))
+# fRs <- file.path("../filtered",paste0(sample.names,"_R_filt.fastq.gz"))
+# names(fFs) <- sample.names
+# names(fRs) <- sample.names
+```
+
+I think there's something funky going on here, which is why none of the files are going through the filter.
+
+note: relaxing the maxEE (expected errors) for the reverse read and removing the truncation length parameter allowed for reads to be retained.
+```{r testing-dada2-parameters}
+# relaxing expected errors for R2 and remvoing truncLen
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs,
+              maxN=0, maxEE=c(2,5), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE)
+head(out)
+```
+
+Supposedly, these are 75 bp reads, but including ANY truncLen values causes all reads to be filtered and none to be retained. So I'm going to ditch that parameter entirely and play with the maxEE parameter some more.
+
+```{r testing-more-parameters}
+# default expected errors for R2 but removing truncLen
+moreEEs <- filterAndTrim(fnFs, filtFs, fnRs, filtRs,
+              maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE) 
+head(moreEEs)
+
+```
+Alright, not surprisingly, that filtered out a few more reads for every sample.
+
+Let's stick with the more stringent filter since we still retain 98% of reads.
+
+Actually, let's see if tightening up the maxEE actually changes things much:
+```{r}
+# default expected errors for R2 but removing truncLen
+tightEEs <- filterAndTrim(fnFs, filtFs, fnRs, filtRs,
+              maxN=0, maxEE=c(1,2), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
+head(tightEEs)
+```
+
+For now, let's go with the tight maxEE values. (this will also speed up processing)
+
+## Learn the error rates
+
+```{r}
+errF <- learnErrors(filtFs, multithread=TRUE)
+
+```
+
+```{r}
+errR <- learnErrors(filtRs, multithread=TRUE)
+```
+
+```{r forward-errors}
+plotErrors(errF, nominalQ=TRUE)
+```
+Hmmm. These fits actually aren't as good as I would expect, particularly for T2C. Most of the other fits look okay.
+
+Here's a question - is there a way to account for this potential mismatch in the expected vs. observed errors by changing parameters for DADA2?
+
+
+```{r reverse-errors}
+plotErrors(errR, nominalQ=TRUE)
+
+```
+Those all look fine.
+
+Proceeding with sample inference.
+
+## Dereplicate
+* this step was included in Wes's dada2 procedure... but not mine, previously.
+I assume it just reduces computation time for the dada2 algorithm
+```{r}
+# dereplicate Fastqs prior to inference
+filtered_files_derepF<-derepFastq(fls=filtFs, verbose = FALSE)
+
+# and the reverse files
+filtered_files_derepR<-derepFastq(fls=filtRs, verbose = FALSE)
+
+```
+
+
+
+## Sample inference
+
+Here is where the core DADA2 algorithm is implemented.
+```{r R1-data}
+dadaFs <- dada(filtered_files_derepF, err=errF, multithread=TRUE)
+
+dadaRs <- dada(filtered_files_derepR, err=errR, multithread=TRUE)
+```
+
+```{r inspect-the-output}
+dadaFs[[1]]
+```
+```{r outputs}
+dadaRs[[1]]
+```
+
+Only 29 sequence variants! So few!!
+** Here there is an option to pool info across samples to be more sensitive to ASV that may be at low frequency.
+
+It might be worth just playing with this option for a minute before proceeding?
+
+```{r test-w-R1-pooling}
+# seems like pseudo-pooling might be the happy hybrid here
+dadaFspool <- dada(filtered_files_derepF, err=errF, multithread=TRUE, pool="pseudo")
+
+```
+And check out if that recovered anything more:
+```{r}
+dadaFspool[[1]]
+```
+
+Okay, so that actually did exactly what we would expect - it increased the number of ASVs from 29 to 45 based on adding weight to rare ASVs. 
+Whether that actually increases the number of species remains to be seen.
+
+Let's do the same pseudo-pool for Reverse reads
+```{r R2-pseudo-pool}
+# seems like pseudo-pooling might be the happy hybrid here
+dadaRspool <- dada(filtered_files_derepR, err=errR, multithread=TRUE, pool="pseudo")
+```
+
+```{r}
+dadaRspool[[1]]
+
+```
+
+## Merge paired-end reads
+
+For both the pseudo-pool and original dataset
+
+important note from DADA2: F and R reads are expected to overlap by at least 12 bases, and are identical to each other in the overlap region (but these conditions can be changed via function arguments).
+
+note: the default parameters discarded way too many of the reads; try reducing the overlap 
+
+```{r original-data}
+mergers <- mergePairs(dadaFs, filtered_files_derepF, dadaRs, filtered_files_derepR, minOverlap = 2,
+  maxMismatch = 2, verbose=TRUE)
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+
+```
+With a minoverlap=5, there were still too many reads tossed.
+A minoverlap=3 is fixing the problem, and although I have the maxMismatch parameter at 2, I'm guessing there won't be that many mismatches (which we can look at in the output data frame)
+
+
+
+```{r pooled-merged-reads}
+poolmergers <- mergePairs(dadaFspool, filtered_files_derepF, dadaRspool, filtered_files_derepR, minOverlap = 1, maxMismatch = 2, verbose=TRUE)
+# Inspect the merger data.frame from the first sample
+head(poolmergers[[1]])
+```
+
+Okay so my two datasets are poolmergers and mergers.
+
+### Construct sequence table
+
+```{r}
+# mergers dataset
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+```
+
+
+```{r}
+# pooled mergers dataset
+poolseqtab <- makeSequenceTable(poolmergers)
+dim(poolseqtab)
+
+```
+
+
+Useful QC:
+```{r}
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+```
+Geez, that's all over the place. Obviously, we will want to remove the shorties from this dataset. Also, why so much nonspecific amplification?
+
+```{r}
+table(nchar(getSequences(poolseqtab)))
+```
+The main distribution here is ~106-115 bp.
+
+I wonder if there are particular species with lots of sequence variation?
+
+
+Remove non-target sequences (those <105)
+```{r}
+# regular dataset
+seqtab2 <- seqtab[,nchar(colnames(seqtab)) %in% 105:115]
+```
+
+
+```{r}
+# pool dataset
+poolseqtab2 <- poolseqtab[,nchar(colnames(poolseqtab)) %in% 105:115]
+
+```
+
+
+## Remove chimeras
+
+```{r}
+# reg dataset
+seqtab.nochim <- removeBimeraDenovo(seqtab2, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+
+```
+wow, interesting. I wonder if that's a relatively large %?
+```{r}
+576/4192
+```
+
+
+```{r}
+# pooled dataset
+poolseqtab.nochim <- removeBimeraDenovo(poolseqtab2, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(poolseqtab.nochim)
+```
+
+```{r}
+576/7702
+```
+
+One way that the tutorial suggests looking at the % of chimeras is by the number of reads rather than unique seqs.
+```{r}
+sum(seqtab.nochim)/sum(seqtab2)
+```
+So similarly here, chimeras only make up <2% of seq reads (after filtering based on length)
+
+```{r}
+# pooled dataset chimera % reads?
+sum(poolseqtab.nochim)/sum(poolseqtab2)
+```
+A higher % of chimeric reads in the pseudo-pooled dataset. That's interesting.
+
+This seems like an important note: " Considerations for your own data: Most of your reads should remain after chimera removal (it is not uncommon for a majority of sequence variants to be removed though). If most of your reads were removed as chimeric, upstream processing may need to be revisited. In almost all cases this is caused by primer sequences with ambiguous nucleotides that were not removed prior to beginning the DADA2 pipeline."
+
+
+## Track reads through the pipeline
+
+```{r}
+# reg dataset
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+
+track %>%
+  write.csv("csv_outputs/regseqs_reads_tracked.csv")
+```
+
+```{r}
+# pooled dataset
+trackp <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(poolmergers, getN), rowSums(poolseqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(trackp) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(trackp) <- sample.names
+head(trackp)
+
+trackp %>%
+  write.csv("csv_outputs/poolseqs_reads_tracked.csv")
+```
+
+# Output
+
+## Export sequence data for BLAST and sequence/sample table for analysis in R
+
+```{r sample-tables}
+# regular sequences
+write.csv(seqtab.nochim, file="csv_outputs/12Sseqtab_nochimDerep.csv")
+
+# pseudo-pooled sequences
+write.csv(poolseqtab.nochim, file="csv_outputs/12Spoolseqtab_nochimDerep.csv")
+```
+
+
+## using Wes/Pat's way
+```{r regseqs-asv-output}
+ #make fasta file with ASVs
+    asv_seqs=colnames(seqtab.nochim)
+    for(i in 1:length(asv_seqs))
+    {
+        write.table(paste(">ASV",i, sep=""),file="csv_outputs/12S_ASV_regseqtab_nochimDerep.csv", append=TRUE, col.names = F, row.names = F, quote=F)
+        write.table(paste(asv_seqs[i], sep=""),file="csv_outputs/12S_ASV_regseqtab_nochimDerep.csv", append=TRUE, col.names = F, row.names = F, quote=F)
+    }
+```
+Fasta output for poolseqs
+```{r poolseqs-asv-output}
+ #make fasta file with ASVs
+    asv_seqs=colnames(poolseqtab.nochim)
+    for(i in 1:length(asv_seqs))
+    {
+        write.table(paste(">ASV",i, sep=""),file="csv_outputs/12S_ASV_poolseqtab_nochimDerep.csv", append=TRUE, col.names = F, row.names = F, quote=F)
+        write.table(paste(asv_seqs[i], sep=""),file="csv_outputs/12S_ASV_poolseqtab_nochimDerep.csv", append=TRUE, col.names = F, row.names = F, quote=F)
+    }
+```
+
+It would be better to have the column headers as ASV# rather than the actual sequence.
+
+Goal: change ASV headers to numbered ASVs that correspond to those output in the FASTA file.
+```{r first-for-poolseqs}
+# Make map between brief names and full sequences
+briefToSeq <- colnames(poolseqtab.nochim)
+names(briefToSeq) <- paste0("Seq", seq(ncol(poolseqtab.nochim))) # Seq1, Seq2, ...
+# Make new sequence table with brief names
+st.brief <- poolseqtab.nochim
+colnames(st.brief) <- names(briefToSeq)
+# Get real sequence from the brief name later
+#seq_i <- briefToSeq[brief_name_i]
+
+# export the pool seq table with brief names:
+write.csv(st.brief, file="csv_outputs/12S_poolseq_ASVtable.csv")
+```
+
+```{r change-headers-regseqs-asv-table}
+# Make map between brief names and full sequences
+briefToSeqT <- colnames(seqtab.nochim)
+names(briefToSeqT) <- paste0("Seq", seq(ncol(seqtab.nochim))) # Seq1, Seq2, ...
+# Make new sequence table with brief names
+regseqs.brief <- seqtab.nochim
+colnames(regseqs.brief) <- names(briefToSeqT)
+# Get real sequence from the brief name later
+#seq_i <- briefToSeq[brief_name_i]
+
+# export the pool seq table with brief names:
+write.csv(regseqs.brief, file="csv_outputs/12S_regseq_ASVtable.csv")
+
+
+```
+
+
+## Switching over to the taxonomy Rmd for adding species info and metadata...
+
+There are 4192 ASVs in the seqtab.nochim and 7702 ASVs in the poolseqtab.nochim data.
+
+
+
+
+# export sequences in fasta format (previous way)
+
+This should be the most straightforward way to do this:
+```{r}
+# export regular sequences in fasta format
+uniquesToFasta(getUniques(seqtab.nochim), fout="fasta_outputs/12S_regseqs.fasta", ids=paste0("Seq", seq(length(getUniques(seqtab.nochim)))))
+
+# export pool seqs in fasta format
+uniquesToFasta(getUniques(poolseqtab.nochim), fout="fasta_outputs/12S_poolseqs.fasta", ids=paste0("Seq", seq(length(getUniques(poolseqtab.nochim)))))
+```
