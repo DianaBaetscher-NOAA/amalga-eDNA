@@ -41,6 +41,9 @@ meta <- read_xlsx("../data/Amalga2022_cleanMetadata.xlsx")
 ```
 
 
+
+
+
 First thing is to separate out the blanks because the syntax is all over the place (although I fixed some of it already).
 ```{r}
 meta.blanks.explicit <- meta %>%
@@ -77,8 +80,21 @@ meta.organized <- meta.blanks.explicit %>%
                    mutate(parallel_transect = ifelse(str_detect(transect, "perpendicular") & distance_from_pens == 1000, "0", parallel_transect)) 
 
 
+```
+
+
+
+Some general data/metadata:
+```{r}
+meta.organized %>%
+  group_by(Sample_Date, time_of_day, tide) %>%
+  tally()
 
 ```
+
+
+
+
 Check the parallel transect metadata
 ```{r}
 meta.organized %>%
@@ -136,6 +152,60 @@ Most samples should have 9 replicates, although I ran some on the qPCR twice. It
 
 
 Then with that df, we can begin looking at the distribution of DNA quantity over the transects and depths!
+
+```{r}
+merged.df %>%
+  filter(transect == "perpendicular",
+         Sample_Date == "2022_05_05",
+         distance_from_pens == "0",
+         depth == "5"
+         ) %>%
+  arrange(distance_from_pens, depth) %>%
+  select(`Extraction ID`, CT, Quantity, tide, time_of_day)
+
+```
+
+```{r}
+merged.df %>%
+  filter(`Extraction ID` %in% c("e01291", "e01293", "e01294", "e01295")) %>%
+  select(`Extraction ID`, distance_from_pens, CT)
+
+
+```
+
+```{r}
+merged.df %>%
+  arrange(`Extraction ID`) %>%
+  select(`Extraction ID`, distance_from_pens, depth, CT, Quantity)
+
+```
+How far out CT-value-wise do the standards go?
+```{r}
+qpcr.data %>%
+  filter(Task == "STANDARD", sample == "standard6")
+
+```
+
+standard 7 is mostly undetermined, but pops up around 37.5-40.1 cycles
+standard 6 is also sometimes undetermined, but pops up at 34.5-36.5 cycles
+
+seems like actual quantification drops off after 36ish cycles.
+
+What are the CT values for the samples?
+```{r}
+qpcr.data %>%
+  filter(Task == "UNKNOWN", CT != "Undetermined") %>%
+  arrange(CT) %>%
+  filter(CT > 37)
+
+```
+samples:
+CT = 25-44.5 cycles.
+How many samples would be excluded if we dropped anything >37?
+
+A lot! 189 rows!
+
+better to use the gBlock to push the quantification out farther (closer to 40). Or just go with the results as they are and change later if necessary.
 
 
 

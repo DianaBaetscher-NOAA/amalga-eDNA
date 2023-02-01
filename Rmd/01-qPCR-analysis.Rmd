@@ -23,7 +23,6 @@ For the analysis, I want to check for outliers and then compare the correlation 
 
 
 
-
 ```{r load-packages}
 library(tidyverse)
 library(readxl)
@@ -64,7 +63,8 @@ clean_meta <- frsh_meta %>%
   mutate(label = ifelse(location == "Creek", "freshwater", label)) %>%
   mutate(label = ifelse(is.na(location), "blank", label))
 
-
+clean_meta %>% 
+  write_csv("csv_outputs/amalga_clean_metadata.csv")
 ```
 
 
@@ -72,4 +72,16 @@ clean_meta <- frsh_meta %>%
 
 
 
+```{r}
+# scatter plot
+tmp_df %>%
+  arrange(distance) %>%
+  filter(CT != "Undetermined") %>%
+  mutate(cycle_threshold = round(CT, 2)) %>%
+  group_by(`sample`, `Sample Code`) %>%
+  ggplot(aes(x = distance, y = ct, color = `Sample Code`, shape = Sample_type))+
+  geom_point() +
+  theme_bw() +
+  xlab("distance from chum pens")
 
+```
