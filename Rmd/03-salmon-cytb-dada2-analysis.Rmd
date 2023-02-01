@@ -1,0 +1,327 @@
+---
+title: "03-salmon-cytb-dada2-analysis"
+output: html_notebook
+---
+
+20 Jan 2022
+
+Analyzing fastq files for the salmon-specific metabarcoding primer set (Cyt b).
+NOTE: the sample names might be wrong and need to be requeued in BaseSpace... different plate map than the 12S data.
+
+```{r load-library}
+library(dada2)
+library(dplyr)
+```
+
+
+
+```{r set-path-to-files}
+path <- "../cytb/trimmed"
+list.files(path)
+```
+
+Check quality
+
+```{r}
+fnFs <- sort(list.files(path, pattern="_R1.fastq", full.names = TRUE))
+
+fnRs <- sort(list.files(path, pattern="_R2.fastq", full.names = TRUE))
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+```
+
+```{r}
+plotQualityProfile(fnFs[3:4])
+```
+
+
+Pretty significant quality drop at 110 bp in R1 and 90 bp in the other sample. Not sure why the overall quality looks so wonky.
+
+
+Look at R2
+```{r}
+plotQualityProfile(fnRs[3:4])
+```
+
+
+They might be overall poor quality because the diversity is relatively low and I should have added more PhiX?
+
+R2, the Q30 drops at like 75 bp. Yuck.
+
+```{r}
+# Place filtered files in filtered/ subdirectory
+filtFs <- file.path("../filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path("../filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+# fFs <- file.path("../filtered",paste0(sample.names,"_F_filt.fastq.gz"))
+# fRs <- file.path("../filtered",paste0(sample.names,"_R_filt.fastq.gz"))
+# names(fFs) <- sample.names
+# names(fRs) <- sample.names
+```
+
+
+```{r testing-dada2-parameters}
+# relaxing expected errors for R2 and remvoing truncLen
+# out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs,
+#               maxN=0, maxEE=c(2,5), truncQ=2, rm.phix=TRUE,
+#               compress=TRUE, multithread=TRUE)
+# head(out)
+```
+
+Actually, let's see if tightening up the maxEE actually changes things much:
+```{r}
+# default expected errors for R2 but removing truncLen
+# tightEEs <- filterAndTrim(fnFs, filtFs, fnRs, filtRs,
+#               maxN=0, maxEE=c(1,2), truncQ=2, rm.phix=TRUE,
+#               compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
+# head(tightEEs)
+```
+
+
+Try more stringent filtering by truncating length, but increasing the number of expected errors.
+```{r filtering-parameters}
+out.trun <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(90,80),
+              maxN=0, maxEE=c(3,5), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE) 
+head(out.trun)
+
+```
+Let's more forward with those parameters
+
+Because there are some files with no reads, I need to remove those before continuing.
+```{r}
+as.data.frame(out.trun) %>%
+  filter(reads.out == 0)
+
+```
+
+Okay, I moved that file and it's R2 mate into the "zeros" directory and out of the "trimmed directory.
+
+Let's see if I can push onward in this analysis.
+
+
+
+
+
+## Learn the error rates
+
+```{r}
+errF <- learnErrors(filtFs, multithread=TRUE)
+
+```
+
+```{r}
+errR <- learnErrors(filtRs, multithread=TRUE)
+```
+
+```{r forward-errors}
+plotErrors(errF, nominalQ=TRUE)
+```
+
+```{r reverse-errors}
+plotErrors(errR, nominalQ=TRUE)
+
+```
+Those all look fine.
+
+Proceeding with sample inference.
+
+## Dereplicate
+* this step was included in Wes's dada2 procedure... but not mine, previously.
+I assume it just reduces computation time for the dada2 algorithm
+```{r}
+# dereplicate Fastqs prior to inference
+filtered_files_derepF<-derepFastq(fls=filtFs, verbose = FALSE)
+
+# and the reverse files
+filtered_files_derepR<-derepFastq(fls=filtRs, verbose = FALSE)
+
+```
+
+
+## Sample inference
+
+Here is where the core DADA2 algorithm is implemented.
+```{r R1-data}
+#dadaFs <- dada(filtered_files_derepF, err=errF, multithread=TRUE)
+
+#dadaRs <- dada(filtered_files_derepR, err=errR, multithread=TRUE)
+```
+
+```{r inspect-the-output}
+#dadaFs[[1]]
+```
+
+```{r outputs}
+#dadaRs[[1]]
+```
+
+Use the pseudo-pool option to retain rare variants:
+
+```{r test-w-R1-pooling}
+# seems like pseudo-pooling might be the happy hybrid here
+dadaFspool <- dada(filtered_files_derepF, err=errF, multithread=TRUE, pool="pseudo")
+
+# reverse reads
+dadaRspool <- dada(filtered_files_derepR, err=errR, multithread=TRUE, pool="pseudo")
+```
+And check out if that recovered anything more:
+```{r}
+dadaFspool[[1]]
+```
+
+Okay, so that actually did exactly what we would expect - it increased the number of ASVs from 29 to 45 based on adding weight to rare ASVs. 
+Whether that actually increases the number of species remains to be seen.
+
+
+```{r}
+dadaRspool[[1]]
+
+```
+
+
+## Merge paired-end reads
+
+For the pseudo-pool data
+
+important note from DADA2: F and R reads are expected to overlap by at least 12 bases, and are identical to each other in the overlap region (but these conditions can be changed via function arguments).
+
+note: the default parameters discarded way too many of the reads; try reducing the overlap 
+
+```{r working-w-pooled-data}
+mergers <- mergePairs(dadaFspool, filtered_files_derepF, dadaRspool, filtered_files_derepR, minOverlap = 12,
+  maxMismatch = 2, verbose=TRUE)
+# Inspect the merger data.frame from the first sample
+head(mergers[[8]])
+
+```
+
+
+### Construct sequence table
+
+```{r}
+# mergers dataset
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+```
+
+
+Useful QC:
+```{r}
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+```
+### Check the expected size in Geneious for these primers...
+I think 141-155 is appropriate. Damian said the amplicon is 186-189 and we trimmed the primers before DADA2 (~40 bp.)
+
+Remove non-target sequences (those <141 and >155)
+```{r}
+# regular dataset
+seqtab2 <- seqtab[,nchar(colnames(seqtab)) %in% 141:155]
+```
+
+
+## Remove chimeras
+
+```{r}
+# reg dataset
+seqtab.nochim <- removeBimeraDenovo(seqtab2, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+
+```
+```{r}
+5101/12221
+```
+
+
+## Track reads through the pipeline
+
+```{r}
+# reg dataset
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFspool, getN), sapply(dadaRspool, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+
+library(readr)
+as.data.frame(as.table(track)) %>%
+  rename(sample = Var1, read_type = Var2, count = Freq) %>%
+  arrange(sample) %>%
+  write_csv("csv_outputs/CytBseqs_reads_tracked.csv")
+```
+
+
+
+## Export files for taxonomy and samples/ASVs
+
+```{r regseqs-asv-output}
+ # #make fasta file with ASVs
+ #    asv_seqs=colnames(seqtab.nochim)
+ #    for(i in 1:length(asv_seqs))
+ #    {
+ #        write.table(paste(">ASV",i, sep=""),file="csv_outputs/CytB_ASV_seqtab_nochim.csv", append=TRUE, col.names = F, row.names = F, quote=F)
+ #        write.table(paste(asv_seqs[i], sep=""),file="csv_outputs/CytB_ASV_seqtab_nochim.csv", append=TRUE, col.names = F, row.names = F, quote=F)
+ #    }
+```
+
+That's the input for the FASTA blastn search.
+
+
+Goal: change ASV headers to numbered ASVs that correspond to those output in the FASTA file.
+```{r output-poolseqs}
+# # Make map between brief names and full sequences
+# briefToSeq <- colnames(seqtab.nochim)
+# names(briefToSeq) <- paste0("Seq", seq(ncol(seqtab.nochim))) # Seq1, Seq2, ...
+# # Make new sequence table with brief names
+# st.brief <- seqtab.nochim
+# colnames(st.brief) <- names(briefToSeq)
+# 
+# # export the pool seq table with brief names:
+# write.csv(st.brief, file="csv_outputs/CytB_ASVtable.csv")
+```
+
+
+
+## try cleaning up using these
+```{r output-fasta-file}
+# output ASVs in FASTA format
+uniquesToFasta(getUniques(seqtab.nochim), fout="csv_outputs/CytBUniqueSeqs.fasta", ids=paste0("ASV", seq(length(getUniques(seqtab.nochim)))))
+
+```
+That's the input for the FASTA blastn search.
+
+Sample/ASV table to match up with ASVs from the FASTA file.
+```{r first-for-poolseqs}
+# Make map between brief names and full sequences
+briefToSeq <- colnames(seqtab.nochim)
+names(briefToSeq) <- paste0("ASV", seq(ncol(seqtab.nochim))) # ASV1, ASV2, ...
+# Make new sequence table with brief names
+st.brief <- seqtab.nochim
+colnames(st.brief) <- names(briefToSeq)
+
+# export the pool seq table with brief names:
+write.csv(st.brief, file="csv_outputs/CytBsampleTable.csv")
+```
+
+
+Check on the number of ASVs in the sample table - it should be 2011 to match the ASV fasta table
+```{r}
+as.data.frame(as.table(seqtab.nochim)) %>%
+  select(Var2) %>%
+  unique()
+```
+
+nohup blastn -db nt -query CytBUniqueSeqs.fasta -perc_identity 96 -qcov_hsp_perc 100 -num_threads 10 -out CytBblast.out -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore sscinames staxids"
+
+And again, it should be 7120 ASVs and the Blast output only contains 7096.
+
+That should mean that the remaining ASVs don't match the filtering parameters.
+
+
+
+
+

@@ -1,0 +1,810 @@
+---
+title: "Taxonomic filtering"
+output: html_notebook
+---
+
+11 January 2022
+
+Read the taxonomy files back into Rstudio after performing the blastn search.
+
+
+
+```{r load-libraries}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+
+```
+
+```{r}
+pool_taxonomy <-read.delim("blast_outputs/12S_poolseqs_taxlineage.txt", header = FALSE)
+
+head(pool_taxonomy)
+```
+
+
+
+# clean up the header a bit
+
+```{r}
+# use the full taxonomy rather than the seq id to collapse identical entries
+pool_tax_df <- pool_taxonomy %>%
+  filter(V4 > 100) %>% # make sure all retained matches are >100 bp
+  select(-V2, -V5, -V6, -V7, -V14, -V8, -V9, -V10, -V11, -V12, -V15, -V16) %>%  #remove unnecessary columns
+  group_by(V1, V17) %>% # group by the sequence key and the full taxonomy to reduce duplicate entries
+  unique() %>% # doing that reduced the number of entries from 146k to 17k
+  rename(qseqid=V1, perc_id=V3, length=V4, sscinames=V13, taxonomy=V17) %>% #rename headers
+  filter(!str_detect(sscinames, "environmental")) %>% # filter out any environmental samples
+  filter(!str_detect(sscinames, "synthetic")) %>% # filter out any synthetic "samples"
+  filter(perc_id >= 98) # seems like some of the matches below 98% are dubious (jellyfish and herring <1% different??)
+ 
+```
+
+Maybe break up that taxonomic info so that we can focus on the things that we can identify to some relevant level (at least order!?)
+```{r}
+# first figure out where there are issues with that taxonomy format:
+genus.hybrids <- pool_tax_df %>%
+  filter(!str_detect(taxonomy, ";")) %>% 
+  # looking at these, they're probably hybrids or not good species, which is why the taxonomy broke down. 
+  separate(sscinames, into = c("genus"), extra = "drop", remove = FALSE)
+
+# and where there aren't issues
+taxon_df <- pool_tax_df %>%
+  filter(str_detect(taxonomy, ";")) %>%
+  separate(taxonomy, into=c("kingdom", "phylum", "class", "order", "family", "genus", "species"), sep = ";")
+
+# create a separate taxonomic lineage df with unique entries
+lineage_df <- taxon_df %>%
+  ungroup() %>%
+  select(kingdom, phylum, class, order, family, genus) %>%
+  unique()
+
+
+# there are only 18 unique genera in this small messed up part of the dataset 
+genus_fixed <- genus.hybrids %>%
+  ungroup() %>%
+  select(genus) %>%
+  unique() %>% # can I fix the lineage by adding existing data?
+  left_join(lineage_df, by = "genus") %>% # now the Tachyeres duck is the only loner
+# fix that manually
+  mutate(family = ifelse(genus == "Tachyeres", 
+                         "Anatidae", family)) %>%
+    mutate(order = ifelse(genus == "Tachyeres",
+                        "Anseriformes", order)) %>%
+      mutate(class = ifelse(genus == "Tachyeres",
+                        "Aves", class)) %>%
+        mutate(phylum = ifelse(genus == "Tachyeres", 
+                               "Chordata", phylum)) %>%
+          mutate(kingdom = ifelse(genus == "Tachyeres",
+                                    "Eukaryota", kingdom))
+
+# add the lineage info back to the rest of the data
+genus_fixed_df <- genus.hybrids %>%
+  ungroup() %>%
+  left_join(genus_fixed, by = "genus") %>%
+  select(-taxonomy)
+```
+
+
+```{r}
+# and merge them together
+fixed_tax_df <- taxon_df %>%
+  bind_rows(genus_fixed_df) %>%
+  # and fix the species syntax with underscores
+   mutate_if(is.character, str_replace_all, ' ', '_') %>%
+   filter(!str_detect(sscinames, "_x_"))
+  # remove hybrids because the mtDNA sequence actually is only one or the other of the parent species
+
+```
+
+## Sort and clean-up the results based on % identity
+
+```{r total-n-seqs}
+# how many total sequences?
+fixed_tax_df %>%
+  select(qseqid) %>%
+  unique()
+
+```
+
+There are four categories:
+1. sequences that match a single species unambiguously (the minority)
+
+Sequences that match multiple species are divided in three categories:
+2. top matches > 2% identity than second-ranked matches
+3. top matches < 2% identity than second-ranked matches
+4. Multiple top matches with the same % identity
+
+```{r}
+# 1. sequences that are unambiguously a single species
+single_spp_seqs <- fixed_tax_df %>% 
+  group_by(qseqid) %>%
+  add_tally(name = "n_taxa") %>%
+  filter(n_taxa == 1)
+  
+```
+140 sequences are single-species
+
+
+```{r}
+# remove the single-species seqs from the dataframe and then rank the hits by % identity for the remaining seqs
+seq_id_diff <- fixed_tax_df %>%
+  anti_join(., single_spp_seqs) %>%
+  select(-length) %>%
+  group_by(qseqid, species, genus, family, order, class, phylum, kingdom) %>%
+    mutate(seq_percID = max(perc_id)) %>%
+    group_by(qseqid, species, genus, family, order, class, phylum, kingdom, seq_percID) %>%
+  summarise(max(seq_percID)) %>% # take just the top hit for each taxon (for each sequence)
+  select(-`max(seq_percID)`) %>%
+  ungroup() %>%
+  group_by(qseqid) %>%
+      mutate(id_rank = rank(desc(seq_percID), ties.method = "min")) %>% # rank the taxonomic hits per sequence by % id
+       mutate(top_perc = max(seq_percID)) %>% # designate the highest % id for the best taxonomic hit in each sequence (in some, but not all cases, this is 100%)   
+      mutate(diff = top_perc - seq_percID) %>% # calculate the difference between the % identity of the top hit and each subsequent taxonomic hit
+        arrange(diff)
+
+seq_id_diff %>%
+  filter(diff > 0)
+
+```
+
+Now I have the single best entry for each species for each sequence ranked and with the difference between the first and second ranked entries calculated.
+
+For sequences with multiple top hits, where the difference between ranked taxa = 0, I will end up defaulting to genus- or family-level ID (or carrying the individual species info around in some capacity). I will do the same for any sequences where the difference betweeen the first and second ranked taxa is < 2%.
+
+
+Figure out which differences are > 2% and eliminate those first?
+```{r}
+# filter out any taxa that are >2% less matching identity than the top taxonomic hit for a given sequence
+to_remove_low_perc_hits <- seq_id_diff %>%
+  ungroup() %>%
+  group_by(qseqid) %>%
+  filter(diff > 2)
+
+keepers <- seq_id_diff %>%
+  anti_join(to_remove_low_perc_hits)
+
+```
+
+```{r}
+# this data frame includes only those taxonomic hits that should be considered.
+# so now I need to determine whether they should be assigned to genus, family, order, etc. 
+singletons <- keepers %>%
+  select(qseqid) %>%
+  tally() %>%
+  filter(n == 1)
+
+# these are the seqs that now have only a single match
+singleton_df <- singletons %>%
+  left_join(keepers) %>%
+  select(-n) %>%
+  bind_rows(single_spp_seqs) # combine the single spp data
+
+## Genus-level matches
+# remove the singletons from the bigger df 
+single_genus <- keepers %>%
+  anti_join(singleton_df)%>% # at best, these should be genus-level matches
+  group_by(qseqid, genus) %>%
+  tally() %>%
+  ungroup() %>%
+  group_by(qseqid) %>%
+  tally() %>%
+  filter(n == 1) %>% # seqs that match a single genus
+  select(-n) %>%
+  left_join(., keepers) %>%
+  mutate(taxonomic_level = "genus") %>%
+  mutate(taxon = genus)
+  
+
+## Family-level matches
+single_family <- keepers %>%
+  anti_join(singleton_df)%>%
+  anti_join(single_genus) %>%
+  group_by(qseqid, family) %>%
+  tally() %>%
+  ungroup() %>%
+  group_by(qseqid) %>%
+  tally() %>%
+  filter(n == 1) %>% # seqs that match a single family
+  select(-n) %>%
+  left_join(., keepers) %>%
+  mutate(taxonomic_level = "family") %>%
+  mutate(taxon = family)
+
+
+## Order-level matches
+single_order <- keepers %>%
+  anti_join(singleton_df)%>%
+  anti_join(single_genus) %>%
+  anti_join(single_family) %>%
+  group_by(qseqid, order) %>%
+  tally() %>%
+  ungroup() %>%
+  group_by(qseqid) %>%
+  tally() %>%
+  filter(n == 1) %>% # seqs that match a single order
+  select(-n) %>%
+  left_join(., keepers) %>%
+  mutate(taxonomic_level = "order") %>%
+  mutate(taxon = order)
+
+
+## Class-level matches
+single_class <- keepers %>%
+  anti_join(singleton_df)%>%
+  anti_join(single_genus) %>%
+  anti_join(single_family) %>%
+  anti_join(single_order) %>%
+  group_by(qseqid, class) %>%
+  tally() %>%
+  ungroup() %>%
+  group_by(qseqid) %>%
+  tally() %>% 
+  filter(n == 1) %>% # seqs that match a single class
+  select(-n) %>%
+  left_join(., keepers) %>%
+  mutate(taxonomic_level = "class") %>%
+  mutate(taxon = class)
+
+
+## Phylum-level matches
+single_phylum <- keepers %>%
+  anti_join(singleton_df)%>%
+  anti_join(single_genus) %>%
+  anti_join(single_family) %>%
+  anti_join(single_order) %>%
+  anti_join(single_class) %>%
+  group_by(qseqid, phylum) %>%
+  tally() %>%
+  ungroup() %>%
+  group_by(qseqid) %>%
+  tally() %>% 
+  filter(n == 1) %>% # seqs that match a single phylum
+  select(-n) %>%
+  left_join(., keepers) %>%
+  mutate(taxonomic_level = "phylum") %>%
+  mutate(taxon = phylum)
+
+# Kingdom level matches
+single_kingdom <- keepers %>%
+  anti_join(singleton_df)%>%
+  anti_join(single_genus) %>%
+  anti_join(single_family) %>%
+  anti_join(single_order) %>%
+  anti_join(single_class) %>%
+  group_by(qseqid, kingdom) %>%
+  tally() %>%
+  ungroup() %>%
+  group_by(qseqid) %>%
+  tally() %>% 
+  filter(n == 1) %>% # seqs that match a single kingdom
+  select(-n) %>%
+  left_join(., keepers) %>%
+  mutate(taxonomic_level = "kingdom") %>%
+  mutate(taxon = kingdom)
+```
+
+Seems... unlikely that a jellyfish would be 1% dissimilar from a herring. BUT, it's below 98%, so maybe that's at least one reason to be more stringent on the upstream side of this?
+
+Adding that 98% filter in back up top.
+
+Modify the singleton_df to include the right variable headers
+```{r}
+single_spp <- singleton_df %>%
+  select(-perc_id, -length, -sscinames, -n_taxa) %>%
+  mutate(taxonomic_level = "species") %>%
+  mutate(taxon = species)
+
+```
+
+```{r}
+# recombine the full data set now that the appropriate level of taxonomy has been determined
+sorted_tax_df <- bind_rows(single_kingdom, single_phylum, single_class, single_order, single_family, single_genus, single_spp)
+
+sorted_tax_df %>% 
+  write.csv("csv_outputs/poolseq_taxonomy_df.csv")
+
+# just fish
+just.fish <- sorted_tax_df %>%
+  filter(class == "Actinopteri") %>% # if I filter by class, I can remove all taxonomic levels above that
+  filter(!taxonomic_level %in% c("kingdom", "phylum", "class"))
+# and save that
+just.fish %>% 
+  write.csv("csv_outputs/12S_ActinopteriTaxonomy98perc.csv")
+
+edna.fish.family <- just.fish %>%
+  select(family) %>%
+  unique() %>%
+  arrange(family)
+
+# take a quick look at the genera included too
+just.fish %>%
+  select(genus) %>%
+  unique() %>%
+  arrange(genus)
+```
+Okay, so that df should contain the basic taxa in the dataset assigned to the taxonomic level for which we can be relatively confident (>2% difference between the top-and-next highest hit).
+
+
+## Filter the eDNA taxonomy data frame by Fish Atlas
+
+I fundamentally have an issue with this step: we want to use biogeographic information to remove illogical matches, but we know that Fish Atlas is not comprehensive and so this "filter" is a very manual and tedious check. For example, sablefish, which is very common in nearshore SE AK, is not included in the Fish Atlas data.
+
+Given that, here is how I will proceed:
+
+Using family as the level of matching:
+First, I want to fill out the order for the fish atlas data using my data frame,
+then I'll filter the data by family, but retain the species and genus designations as appropriate base on the prior taxonomic filtering step.
+
+
+```{r clean-up-fishatlas-formatting}
+# read in fish atlas data from Pat:
+fishatlas <- read.csv("../data/FAdata.csv") %>%
+  # remove unnecessary columns
+  select(Sp_CommonName, Sp_ScientificName, Fam_ScientificName) %>%
+  arrange(Fam_ScientificName)
+
+# clean-up the format (remove spaces)
+fishb <- fishatlas %>% 
+  mutate_all(~(str_replace(., " ", "_"))) %>%
+  rename(common = Sp_CommonName, family = Fam_ScientificName)
+
+# fix rockfishes so that it matches our eDNA data frame
+fish.atlas.fixed <- fishb %>%
+  mutate(family = ifelse(str_detect(common, "rockfish"), "Sebastidae", family))
+
+```
+
+quick check: which taxa are filtered by the fish atlas? 
+```{r}
+# which taxa are filtered out when using the fish atlas?
+# it turns out some of these are definitely real detections.
+just.fish %>%
+  anti_join(., fish.atlas.fixed) %>%
+  unique() %>%
+  arrange(family) %>%
+  filter(!str_detect(species, "Carassius")) %>%
+  filter(!str_detect(species, "Cyprinus")) %>%
+  #select(family) %>%
+  unique() %>%
+  arrange(qseqid) %>%
+  filter(taxonomic_level %in% c("species", "genus", "family", "order")) %>%
+  select(qseqid, species, family, taxon, taxonomic_level)
+
+
+```
+**that is where sablefish and rockfish are filtered out! Why??
+Manual checks on the taxa filtered out by Fish Atlas.
+
+Focus on the "taxon" field here, since those are the data that will be carried forward
+The Merluccius should be filtered out because of geography.
+Lepomis_macrochirus = bluegill
+Labidesthes_sicculus = brook silverside
+Leuciscidae = freshwater fish (Cyprinidae)
+Ambloplites = freshwater fish
+Merluccius = Atlantic/Europe
+Mallotus_villosus = capelin (possible in AK??)
+Micropterus_dolomieu = smallmouth bass
+Etheostoma = freshwater
+Engraulidae = most likely from the fish food
+Lipolagus_ochotensis = black-eared smelt (deep water... but in the N Pacific)
+Catostomidae = freshwater suckers
+Percidae = fresh/brackish waters of N America
+Anoplopomatidae = sablefish!!!
+Scomber_scombrus = Atlantic mackerel (fish food, maybe)
+Echiichthys_vipera = Atlantic
+Micropterus = black basses
+Macrouridae = deep water (Grenadiers or rattails)
+Pimephales = freshwater
+Percina_peltata = freshwater/Eastern US
+Trachinus_draco = Atlantic
+Bagre_marinus = catfish
+Anarrhichthys_ocellatus = wolf eel
+
+Here's where the painful part comes in - we want to keep the following species that are otherwise filtered out by the Fish Atlas join:
+
+"Anoplopomatidae"
+"Anarrhichthys_ocellatus"
+"Macrouridae"
+"Lipolagus_ochotensis"
+"Mallotus_villosus"
+
+
+Probably the simplest way to do this is to keep the inner join with Fish Atlas and then add these back on.
+```{r make-extra-df}
+extra.keepers <- just.fish %>%
+  filter(taxon %in% c("Anoplopomatidae", "Anarrhichthys_ocellatus", "Macrouridae", "Lipolagus_ochotensis", "Mallotus_villosus"))
+```
+
+
+
+```{r filter-edna-data-with-fishatlas}
+fishatlas.edna.tax <- fish.atlas.fixed %>%
+  inner_join(., just.fish, by = "family") %>%
+  mutate(to.filter = ifelse(taxonomic_level == "species" & species != Sp_ScientificName, "yes", "no"))  # this provides us a way to filter mis-identified taxa to the species level based on fish atlas data - but these taxa are fine to retain at the genus/family level
+
+```
+
+Quick question: how many taxa get removed by because the family matches but the species does not?
+
+```{r spp-removed-by-fishatlas-filter}
+# remove duplicates so that I can take a closer look at which species-level IDs would be removed.
+fishatlas.edna.tax %>%
+  filter(to.filter == "yes") %>%
+  select(-qseqid) %>%
+  select(taxon) %>%
+  unique()
+
+```
+In total, 8 species would be removed from the dataset due to matching family but mismatching species with Fish Atlas. Let's verify each one.
+
+Oncorhynchus_tshawytscha - Chinook salmon... definitely present in the marine nearshore outside of Juneau. Probably shouldn't remove.
+Leptocottus_armatus - Pacific staghorn sculpin - also quite likely to be present
+Artedius_fenestralis - Padded sculpin - distribution extends to AK.. unknownn.
+Atheresthes_evermanni - Kamchatka flounder - unlikely 
+Sardina_pilchardus - European pilchard - unlikely (fish food)
+Opisthonema_oglinum - Atlantic thread herring - unlikely (fish food)
+Hexagrammos_decagrammus - kelp greenling (definitely possible)
+Gymnammodytes_semisquamatus - Smooth sandeel - distribution = Europe (maybe fish food)
+
+
+So the conclusion is that 50% of those are possible or likely in our study system and we should keep the following:
+Oncorhynchus_tshawytscha
+Leptocottus_armatus
+Artedius_fenestralis
+Hexagrammos_decagrammus
+Atheresthes_evermanni -should be switched to genus-level because arrowtooth flounder is a sister-species of Kamchatka flounder
+
+
+
+
+I hate doing this, but I'm going to have to manually filter the four to preserve the others:
+```{r}
+# filter based on fish atlas, but retain species that were double-checked
+fishatlas.edna.filtered <- fishatlas.edna.tax %>%
+  filter(!taxon %in% c("Sardina_pilchardus", "Opisthonema_oglinum", "Gymnammodytes_semisquamatus")) %>%
+  # and then add back on the taxa from extra.keepers
+  bind_rows(extra.keepers) %>%
+  # switch Atheresthes_evermanni to a genus-level match
+  mutate(taxon = ifelse(species == "Atheresthes_evermanni", 
+                        "Atheresthes", taxon)) %>%
+  mutate(taxonomic_level = ifelse(species == "Atheresthes_evermanni",
+                        "genus", taxonomic_level)) %>%
+  select(-to.filter)
+```
+
+And just to confirm that that took care of the outstanding issues, look for sebastes, sablefish, etc.
+```{r}
+fishatlas.edna.filtered %>%
+  filter(genus == "Atheresthes")
+
+```
+
+
+
+```{r}
+# export that fish-only taxonomy df
+fishatlas.edna.filtered %>%
+  write.csv("csv_outputs/12Sfishatlas.edna.taxonomy.csv")
+```
+
+
+
+
+
+## Now, looking at the sample/sequence dataframe
+
+There are only 748 unique sequences that made it through the blast/taxonomy gauntlet, so why are there an order of magnitude more sequences in the seqtab.nochim data tables. Maybe because they didn't make it through the BLAST filtering? i.e., no match at >98% identity?
+
+
+1) I need to make the ASV-sample table usable without the actual sequences as the headers.
+2) read in the new, clean metadata (that I pushed to the VM) and connect it with the sample info
+3) bung in all together into a df and send to Wes for scrutiny.
+
+
+
+
+
+#### STOP HERE ### 
+go to 06-merge-samples-w-taxonomy.Rmd instead for the latest version of this analysis.
+
+
+
+## Read in ASV-sample table for Poolseq data
+
+```{r ASV-sample-table}
+asv_tbl <- read.csv("csv_outputs/12S_poolseq_ASVtable.csv") %>%
+  rename(sample.PCR = X) %>%
+  separate(sample.PCR, into = c("sample", "rep"), remove = F)
+
+```
+
+
+Combine taxonomy and sample ASV table
+```{r merge-taxonomy-and-sample-tbl}
+# pivot longer for ease of joining
+asv_long_tbl <- asv_tbl %>%
+  pivot_longer(cols = 4:7705, names_to = "ASV", values_to = "count")
+
+# join data frames
+uncollapsed_poolseq_tax_df <- asv_long_tbl %>%
+  left_join(., sorted_tax_df, by = c("ASV" = "qseqid"))
+
+# collapse these based on the appropriate taxonomic level
+collapsed_poolseq_tax_df <- uncollapsed_poolseq_tax_df %>%
+  select(sample.PCR, sample, rep, ASV, count, taxon, taxonomic_level) %>% ## I need to go back and fix the missing % for the species-level hits
+  unique()
+
+```
+That data frame still contains a bunch of NAs that didn't have blast hits. Let's go ahead and remove them.
+
+```{r remove-NAs}
+poolseq_tax_tidydf <- collapsed_poolseq_tax_df %>%
+  filter(!is.na(taxon)) %>% # remove NAs
+  filter(count > 0) # remove entries with zero reads for that sequence
+
+```
+
+
+Add metadata to that tidy frame
+```{r read-in-metadata}
+# metadata tidied and ready to go
+meta <- read.csv("../metadata/amalga_clean_metadata.csv")
+
+```
+
+
+```{r merge-asvs-samples-and-metadata}
+poolseq_tax_tidymeta <- poolseq_tax_tidydf %>%
+  left_join(., meta, by = "sample") #%>%
+  #filter(!is.na(label)) # remove aquarium samples?
+
+```
+
+
+```{r play-around-a-bit}
+poolseq_tax_filtered_w_meta <- poolseq_tax_tidymeta %>%
+  arrange(distance) %>%
+  filter(taxonomic_level != "kingdom") %>% # remove these totally uninformative matches
+  # collapse multiple entries for the same taxon in the same sample replicate
+  group_by(sample.PCR, taxon) %>%
+  mutate(count = sum(count)) %>%
+  select(-ASV) %>% 
+  unique() # that reduces the number of rows from 7k to 4k
+
+```
+
+That's pretty useful.
+
+
+## Quick check on negative controls
+
+Let's break it down in a few different ways:
+
+```{r}
+# negatives?
+poolseq_tax_filtered_w_meta %>%
+  filter(label == "blank", taxon != "Homo_sapiens") %>%
+  ggplot(aes(x=sample.PCR, y=count, fill=taxon)) +
+    geom_bar(stat="identity") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    axis.title.x = element_text(margin = margin(t=10))
+  ) +
+  labs(
+    y = "reads",
+    x = "extraction blanks"
+  )
+
+ggsave("pdf_outputs/12S_extraction_blanks.pdf")
+```
+```{r save-uncollapsed-output}
+uncollapsed_poolseq_tax_df %>%
+  write.csv("csv_outputs/12Suncollapsed_tax_df.csv")
+
+
+```
+
+
+```{r}
+# pcr negatives
+poolseq_tax_filtered_w_meta %>%
+  filter(str_detect(sample.PCR, "NEGATIVE"), taxon != "Homo_sapiens") %>%
+  ggplot(aes(x=sample.PCR, y=count, fill=taxon)) +
+    geom_bar(stat="identity") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    axis.title.x = element_text(margin = margin(t=10))
+  ) +
+  labs(
+    y = "reads",
+    x = "PCR negative controls"
+  )
+
+ggsave("pdf_outputs/pcr_negatives.pdf")
+
+# these PCR negatives look awesome.
+```
+
+
+```{r}
+# positives?
+poolseq_tax_filtered_w_meta %>%
+  filter(str_detect(sample.PCR, "POSITIVE"), taxon != "Homo_sapiens") %>%
+  ggplot(aes(x=sample.PCR, y=count, fill=taxon)) +
+    geom_bar(stat="identity") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    axis.title.x = element_text(margin = margin(t=10))
+  ) +
+  labs(
+    y = "reads",
+    x = "PCR positive controls"
+  )
+
+```
+I guess the goldfish doesn't show up at any taxonomic level higher than class?
+
+```{r}
+# species/genus/family-level matches?
+poolseq_tax_filtered_w_meta %>%
+  filter(!is.na(label), 
+         taxon != "Homo_sapiens",
+         taxon != "Canis_lupus",
+         taxonomic_level %in% c("species")) %>%
+  ggplot(aes(x=sample, y=count, fill=taxon)) +
+    geom_bar(stat="identity") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    axis.title.x = element_text(margin = margin(t=10))
+  ) +
+  labs(
+    y = "reads",
+    x = "sample replicates"
+  )
+
+
+```
+
+```{r}
+#output that dataframe to share with Wes...
+poolseq_tax_filtered_w_meta %>%
+  select(-dist_grp) %>%
+  write.csv("csv_outputs/amalga12S_poolseq_tax_w_meta.csv")
+```
+Next up: organize by distance and look at composition.
+Also - could summarize/further collapse taxa by sample when sequences fall in multiple taxonomic levels.
+
+
+
+
+
+
+
+
+### stop here.
+
+## Run an NMDS?
+
+```{r load-library}
+library(vegan)
+
+```
+To run an ordination you will need a data-frame consisting of plot by species (or trait) matrix AND a “groups” data-frame which should consist of plots with a coding variable for what group each plot belongs to, this will be used for plotting the ordination.
+
+This is not really the format that we currently have, so let's move things around a bit.
+```{r}
+# we don't need the metadata for this - simplify
+pool.vegan.df <- poolseq_tax_filtered_w_meta %>% 
+  filter(!taxon %in% c("Homo_sapiens", "Canis_lupus")) %>% # remove these because
+  group_by(location, label, type) %>%
+  mutate(grp = group_indices()) %>% # this creates a group index for each set of field/pcr replicates
+  ungroup() %>%
+  select(grp, sample.PCR, taxon, count)
+
+# separate out the grp info
+grps <- pool.vegan.df %>%
+  select(grp, sample.PCR)
+
+# separate out the df to convert
+wide_df <- pool.vegan.df %>%
+  select(-grp) %>%
+  pivot_wider(id_cols=sample.PCR, names_from=taxon, values_from=count) %>%
+  replace(is.na(.), 0) %>% # replace NAs with zeros
+  select(-sample.PCR)
+  
+matrix <- data.matrix(wide_df, rownames.force = T)
+```
+
+
+convert absolute abundance to relative abundance
+```{r}
+# from the matrix
+pool.tax.rel <- decostand(matrix, method = "total")
+
+# Calculate distance matrix
+distmat <- 
+  vegdist(pool.tax.rel, method = "bray")
+
+# Creating easy to view matrix and writing .csv
+tax.distmat <- 
+  as.matrix(distmat, labels = T)
+
+# Running NMDS in vegan (metaMDS)
+NMS <-
+  metaMDS(tax.distmat,
+          distance = "bray",
+          k = 3,
+          maxit = 999, 
+          trymax = 500,
+          wascores = TRUE)
+
+```
+It is common for NMDS analyses to start by running with 2-dimensions (k), but you want to increase the number of dimensions to ensure a minimized stress value. Keep in mind that anything more than 5-dimensions makes it difficult to interpret a 2-dimensional plot.
+
+As a rule of thumb literature has identified the following cut-off values for stress-level:
+
+Higher than 0.2 is poor (risks for false interpretation).
+0.1 - 0.2 is fair (some distances can be misleading for interpretation).
+0.05 - 0.1 is good (can be confident in inferences from plot).
+Less than 0.05 is excellent (this can be rare).
+
+
+A few options: 
+1) increase k
+2) increase maxit
+
+let's try increasing k
+
+```{r}
+# Running NMDS in vegan (metaMDS)
+NMS.k4 <-
+  metaMDS(tax.distmat,
+          distance = "bray",
+          k = 4,
+          maxit = 999, 
+          trymax = 500,
+          wascores = TRUE)
+
+
+```
+Still no convergence. 
+
+```{r}
+goodness(NMS.k4)
+stressplot(NMS.k4)
+```
+
+That looks pretty damn good though.
+
+```{r}
+stressplot(NMS)
+```
+Also not bad.
+
+Let's go forward with that for the time being.
+
+Plotting the NMDS
+```{r}
+# Plotting points in ordination space
+plot(NMS, "sites")   # Produces distance 
+orditorp(NMS, "sites")   # Gives points labels
+```
+
+BUT, I'm actually less interested in this and more interested in using it with the sample replicates.
+
+## Pivoting back to the dataframe
+
+Here is where the uncollapsed df might be more helpful... let me take a quick look to see what Pat did here (and if what I did for Cornell might be useful)
+
+```{r}
+uncollapsed_poolseq_tax_df
+
+
+```
+

@@ -1,0 +1,489 @@
+---
+title: "pcr replicate filtering"
+output: html_notebook
+---
+
+10 March 2022
+
+Seems like there's a low read depth issue for some (quite a few) PCR replicates.
+
+I want to look at the 12S data first to determine if I should remove a subset of the PCR replicates so they don't artifically change the mean read depths per taxon.
+
+This notebook is the most up-to-date set of figures. It uses output from: 
+
+"01-dada2-analysis.Rmd" 
+and
+"02-taxonomic-filtering.Rmd"
+
+
+
+```{r load-libraries}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+
+```
+
+
+## Read in ASV-sample table for Poolseq data
+
+```{r ASV-sample-table}
+asv_tbl <- read.csv("csv_outputs/12S_poolseq_ASVtable.csv") %>%
+  rename(sample.PCR = X) %>%
+  separate(sample.PCR, into = c("sample", "rep"), remove = F)
+
+
+# pivot longer for ease of joining
+asv_long_tbl <- asv_tbl %>%
+  pivot_longer(cols = 4:length(asv_tbl), names_to = "ASV", values_to = "count") %>%
+  filter(count>0)
+```
+The warning refers to the positive and negative controls that have an extra field - not of critical concern because we still retain the control info.
+
+I want to 
+1. calculate the total reads per sample
+2. determine what proportion of the reads came from each replicate
+3. determine whether there is a logical break between replicates with usable data and those with essentially nothing to add
+
+How many reads per sample?
+```{r}
+asv_long_tbl %>%
+  group_by(sample) %>%
+  mutate(tot_reads = sum(count)) %>%
+  group_by(sample.PCR) %>%
+  mutate(rep_reads = sum(count)) %>%
+  select(sample.PCR, sample, rep, tot_reads, rep_reads) %>%
+  unique() %>% # to avoid duplicate entries
+  mutate(rep_prop = rep_reads/tot_reads) %>%
+  #filter(rep_prop < 0.05)
+  ggplot(aes(x = rep_prop)) +
+  geom_density()
+
+```
+The mean is centered right where you would expect with 3 replicates. That's great.
+
+
+Zoom in on the small blip next to zero
+```{r}
+asv_long_tbl %>%
+  group_by(sample) %>%
+  mutate(tot_reads = sum(count)) %>%
+  group_by(sample.PCR) %>%
+  mutate(rep_reads = sum(count)) %>%
+  select(sample.PCR, sample, rep, tot_reads, rep_reads) %>%
+  unique() %>% # to avoid duplicate entries
+  mutate(rep_prop = rep_reads/tot_reads) %>%
+  filter(rep_prop < 0.25) %>%
+  ggplot(aes(x = rep_prop)) +
+  geom_density()
+
+```
+To me, that looks like 0.06 is the cut-off
+
+```{r}
+reps.to.remove <- asv_long_tbl %>%
+  group_by(sample) %>%
+  mutate(tot_reads = sum(count)) %>%
+  group_by(sample.PCR) %>%
+  mutate(rep_reads = sum(count)) %>%
+  select(sample.PCR, sample, rep, tot_reads, rep_reads) %>%
+  unique() %>% # to avoid duplicate entries
+  mutate(rep_prop = rep_reads/tot_reads) %>%
+  filter(rep_prop < 0.06,
+         !sample %in% c("POSITIVE", "NEGATIVE")) %>%
+  arrange(rep)
+  
+
+```
+No obvious plate affect since replicates from all three plates (A, B, C) are present and only plate C has a notably smaller number of low-read samples to toss. I'm not going to filter the negative and positive controls because those serve a different purpose here.
+
+
+30 PCR replicates are removed due to low read depth (<6% of the total reads for all three replicates for that sample).
+
+
+```{r}
+# use an anti-join to remove those replicates from the asv dataset
+asv.tbl.good.reps <- asv_long_tbl %>%
+  anti_join(., reps.to.remove)
+
+```
+
+
+Now try running through the 12S analysis using this dataframe
+
+
+## Read in filtered taxonomy data frame
+
+```{r read-taxonomy-df}
+# this version is filtered by Fish Atlas and contains only fishes
+taxonomy <- read.csv("csv_outputs/12Sfishatlas.edna.taxonomy.csv") %>%
+  select(-X, -class, -phylum, -kingdom, -common, -Sp_ScientificName) %>% # since this was already filtered by class, no reason to retain these other variables (and the common name and sci name from Fish Atlas aren't correct)
+  unique() %>%
+    filter(taxon != "Perciformes")
+
+```
+
+```{r merge-taxonomy-and-sample-tbl}
+# join data frames
+uncollapsed_poolseq_tax_df <- asv.tbl.good.reps %>%
+  left_join(., taxonomy, by = c("ASV" = "qseqid"))
+
+# collapse these based on the appropriate taxonomic level
+collapsed_poolseq_tax_df <- uncollapsed_poolseq_tax_df %>%
+  select(sample.PCR, sample, rep, ASV, count, taxon, taxonomic_level) %>% ## I need to go back and fix the missing % for the species-level hits
+  unique() %>%
+  filter(!is.na(taxon),  # remove NAs
+          count > 0, 
+         !taxon %in% c("Actinopteri", "Eukaryota"))  %>% # not informative
+  select(-ASV) # remove entries with zero reads for that sequence
+
+```
+
+How many total unique taxa are we even worrying about?
+```{r}
+collapsed_poolseq_tax_df %>%
+  select(taxon, taxonomic_level) %>%
+  unique() %>%
+  arrange(taxon)
+
+```
+
+Group taxonomy for ease of visualizations
+```{r fix-remaining-taxonomy-issues}
+edna.dataframe <- collapsed_poolseq_tax_df %>%
+  filter(!taxon %in% c("Sardinella", "Sardinops")) %>% 
+  # merge chinook into other Onchorhynchus 
+  mutate(taxon = ifelse(taxon == "Oncorhynchus_tshawytscha", "Oncorhynchus", taxon)) %>%
+  mutate(taxon = ifelse(taxon == "Gadidae", "Gadiformes", taxon)) %>%
+    mutate(taxonomic_level = ifelse(taxon == "Gadiformes", "order", taxonomic_level)) %>%
+  mutate(taxon = ifelse(taxon == "Sebastes", "Sebastidae", taxon)) %>% 
+    mutate(taxon = ifelse(taxon == "Hexagrammos_decagrammus", "Hexagrammos", taxon)) %>% 
+      mutate(taxonomic_level = ifelse(taxon == "Hexagrammos", "genus", taxonomic_level)) %>% 
+      mutate(taxon = ifelse(taxon %in% c("Artedius_fenestralis", "Artedius", "Leptocottus_armatus"), "Cottidae", taxon)) %>% 
+      mutate(taxon = ifelse(taxon == "Atheresthes", "Pleuronectidae", taxon)) %>% 
+        mutate(taxon = ifelse(taxon == "Mallotus_villosus", "Osmeriformes", taxon)) %>% 
+          mutate(taxon = ifelse(taxon == "Aulorhynchus_flavidus", "Gasterosteoidei", taxon)) %>%
+            mutate(taxon = ifelse(taxon == "Trichodon_trichodon", "Trichodontidae", taxon)) %>% 
+              mutate(taxon = ifelse(taxon == "Lipolagus_ochotensis", "Bathylagidae", taxon)) %>% 
+                mutate(taxon = ifelse(taxon == "Anarrhichthys_ocellatus", "Anarhichadidae", taxon)) %>% 
+  select(-taxonomic_level) %>%
+  # the taxonomic levels aren't accurate, so let's remove those... probably not important from here on out.
+  group_by(sample.PCR, taxon) %>%
+  mutate(count = sum(count)) %>% # sum reads across taxa
+  unique()
+  
+```
+
+
+```{r}
+# save that
+edna.dataframe %>%
+  write.csv("csv_outputs/12S_filteredGoodPCRreplicatesData.csv")
+
+```
+
+
+## Add metadata to that data frame
+
+```{r read-in-metadata}
+# metadata tidied and ready to go
+meta <- read.csv("../metadata/amalga_clean_metadata.csv") %>%
+  # fix the 100m samples, which are actually between the pens and the creek
+  mutate(distance = ifelse(distance == 100, -100, distance)) %>%
+  mutate(dist_grp = distance)
+
+meta
+```
+
+
+```{r add-meta-data}
+filtered_df_w_metadata <- edna.dataframe %>%
+  left_join(., meta) %>%
+  filter(!is.na(location))
+
+```
+```{r prep-for-plotting}
+# need to group taxa within the same sample/distance and remove duplicates before plotting
+mean.reads.df.to.plot <- filtered_df_w_metadata %>%
+  group_by(taxon, tide, distance) %>%
+  mutate(mean_reads = mean(count)) %>% # this is the mean number of reads per taxon/tide/distance
+  select(taxon, tide, distance, mean_reads) %>% # need to pare down to just this set of variables to avoid counting multiple times
+  unique()
+
+```
+
+
+
+```{r plotting}
+# mean reads per taxon/tide/distance
+mean.reads.df.to.plot %>%
+  filter(!is.na(tide),
+         distance > -10) %>%
+  mutate(tide = ifelse(tide == "incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  ggplot(aes(x = distance, y = mean_reads, fill = reorder(taxon, mean_reads))) +
+  geom_bar(stat="identity") +
+  facet_grid(rows = vars(tide), scales = "free_y") +
+  theme_bw() +
+   theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title.x = element_text(margin = margin(t=10), size = 14),
+    axis.title.y = element_text(margin = margin(r=10), size = 14),
+    legend.text = element_text(size = 12),
+    legend.title = element_blank(),
+    strip.text = element_text(size = 12)
+    ) +
+  labs(
+    y = "Sequencing reads (mean across replicates)",
+    x = "Distance from hatchery pens (m)",
+    fill = "Taxon") +
+  scale_fill_manual(values = c('violetred', "darkviolet", 'purple4','aquamarine3', 'slateblue2', "gray36",'seagreen4', "lemonchiffon", 'firebrick1', "orange1", 'darkgreen', 'hotpink4',"darkblue",'steelblue','lightskyblue', 'darksalmon'))
+  
+ggsave("pdf_outputs/12SmeanReadsDistanceGoodReplicates.pdf", width = 9, height = 5)
+```
+
+
+
+## Make taxon proportions plot
+
+```{r proportions-for-plotting}
+prop.df <- filtered_df_w_metadata %>% 
+  filter(!is.na(tide),
+         type == "eDNA") %>% # remove the controls with no metadata
+  select(-location, -label, -dist_grp) %>%
+  group_by(distance, tide, taxon) %>% # group by distance
+  mutate(tot_tax_reads = sum(count)) %>%
+  group_by(distance, tide, taxon) %>%
+  mutate(taxon_count = sum(count)) %>%
+  select(distance, taxon, tide, tot_tax_reads) %>%
+  unique() %>% # if we don't call unique here, it duplicates the summed entries
+  group_by(distance, tide) %>%
+  mutate(taxon_prop = tot_tax_reads/sum(tot_tax_reads))
+```
+
+
+```{r proportions-plot}
+# plot relative proportions of taxa within a tide/distance group
+# plot used for PPT
+prop.df %>%
+    filter(distance > -10) %>%
+  mutate(tide = ifelse(tide == "incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  ggplot(aes(distance, taxon_prop, fill = reorder(taxon, taxon_prop)))+
+  geom_bar(stat="identity", position="stack") +
+  facet_grid(rows = vars(tide)) +
+  theme_bw() +
+ theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title.x = element_text(margin = margin(t=10), size = 14),
+    axis.title.y = element_text(margin = margin(r=10), size = 14),
+    legend.text = element_text(size = 12),
+    legend.title = element_blank(),
+    strip.text = element_text(size = 12)
+    ) +
+  labs(y = "Proportion of reads",
+       x = "Distance from hatchery pens (m)",
+       fill = "Taxon") +
+  scale_fill_manual(values = c( 'purple4',"darkviolet", 'violetred', 'slateblue2', "gray36", "lemonchiffon",  'darkgreen', 'firebrick1', "orange1",  'aquamarine3',  'seagreen4', 'hotpink4', "darkblue", 'steelblue','lightskyblue', 'darksalmon'))
+# the colors match the other two plots, even though the taxon order has changed.
+
+ggsave("pdf_outputs/12SproportionsDistanceGoodReplicates.pdf", width = 9, height = 5)
+```
+
+
+## What does the "background" look like if we subtract out the chum signal?
+
+Sequencing reads
+```{r subtract-point-source-signal}
+background.plot.reads <- mean.reads.df.to.plot %>%
+  filter(!is.na(tide),
+         taxon != "Oncorhynchus",
+         distance > -10) %>%
+  mutate(tide = ifelse(tide == "incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  ggplot(aes(x = distance, y = mean_reads, fill = reorder(taxon, mean_reads))) +
+  geom_bar(stat="identity") +
+  facet_grid(rows = vars(tide), scales = "free_y") +
+  theme_bw() +
+   theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title.x = element_text(margin = margin(t=10), size = 14),
+    axis.title.y = element_text(margin = margin(r=10), size = 14),
+    legend.text = element_text(size = 12),
+    legend.title = element_blank(),
+    strip.text = element_text(size = 12)
+    ) +
+  labs(
+    y = "Sequencing reads (mean across replicates)",
+    x = "Distance from hatchery pens (m)",
+    fill = "Taxon") +
+  scale_fill_manual(values = c('violetred', "darkviolet", 'purple4','aquamarine3', 'slateblue2', "gray36",'seagreen4', "lemonchiffon", 'firebrick1', "orange1", 'darkgreen', 'hotpink4',"darkblue",'steelblue','lightskyblue', 'darksalmon'))
+  
+  
+```
+Proportions
+```{r prop-of-reads-minus-signal}
+# for proportions, I need to remove the Oncorhynchus reads before calculating the prop of reads per taxon
+
+prop.minus.salmon <- filtered_df_w_metadata %>% 
+  filter(!is.na(tide),
+         taxon != "Oncorhynchus",
+         type == "eDNA") %>% # remove the controls with no metadata
+  select(-location, -label, -dist_grp) %>%
+  group_by(distance, tide, taxon) %>% # group by distance
+  mutate(tot_tax_reads = sum(count)) %>%
+  group_by(distance, tide, taxon) %>%
+  mutate(taxon_count = sum(count)) %>%
+  select(distance, taxon, tide, tot_tax_reads) %>%
+  unique() %>% # if we don't call unique here, it duplicates the summed entries
+  group_by(distance, tide) %>%
+  mutate(taxon_prop = tot_tax_reads/sum(tot_tax_reads))
+
+# plot
+
+background.plot.prop <- prop.minus.salmon %>%
+    filter(distance > -10) %>%
+  mutate(tide = ifelse(tide == "incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
+  ggplot(aes(distance, taxon_prop, fill = reorder(taxon, taxon_prop)))+
+  geom_bar(stat="identity", position="stack") +
+  facet_grid(rows = vars(tide)) +
+  theme_bw() +
+ theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title.x = element_text(margin = margin(t=10), size = 14),
+    axis.title.y = element_text(margin = margin(r=10), size = 14),
+    legend.text = element_text(size = 12),
+    legend.title = element_blank(),
+    strip.text = element_text(size = 12)
+    ) +
+  labs(y = "Proportion of reads",
+       x = "Distance from hatchery pens (m)",
+       fill = "Taxon") +
+  scale_fill_manual(values = c('violetred',"darkviolet",'purple4', "gray36",'slateblue2',  'aquamarine3',  "lemonchiffon", 'darkgreen', 'seagreen4',"orange1", 'firebrick1', "darkblue", 'steelblue', 'hotpink4', 'lightskyblue', 'darksalmon'))
+# the colors match the other two plots, even though the taxon order has changed.
+
+ggsave(background.plot.prop, file = "pdf_outputs/Amalga12SproportionsNoOncorhynchus.pdf", width = 9, height = 5)
+```
+
+
+```{r}
+library(cowplot)
+
+plot_grid(nrow = 2, background.plot.prop, background.plot.reads, labels = c("A", "B"), label_size = 10)
+
+```
+
+
+
+
+
+
+
+## Adding a linear model for the Oncorhynchus reads to compare to qPCR and Cyt b data
+
+Get the counts for chum salmon across the transect and figure out how reads counts compare to the qPCR results.
+
+
+```{r}
+linearModel.12S.plot <- mean.reads.df.to.plot %>% 
+  filter(taxon == "Oncorhynchus",
+         distance>-10) %>%
+    mutate(tide = ifelse(tide == "incoming", "Incoming tide (AM)", "Outgoing tide (PM)")) %>% # rename labels for plot
+    ggplot(aes(x = distance, y = log10(mean_reads), color = tide, shape = tide)) +
+    geom_point() +
+    geom_smooth(method = "lm", alpha = 0.15) +
+    #facet_grid(rows = vars(tide), scales = "free_y") +
+    theme_minimal() +
+    theme(
+    axis.title.x = element_text(margin = margin(t=12), size = 10),
+    #axis.title.x = element_blank(),
+    axis.title.y = element_text(margin = margin(r=12), size = 10),
+    axis.text = element_text(size = 10),
+    legend.title = element_blank(),
+    #legend.title = element_text(size = 14),
+    legend.text = element_text(size = 10),
+    #legend.position = c(0.8, 0.85)
+    legend.position = "none"
+  ) +
+    labs(
+      y = "Mean reads (log10)",
+         x = "Distance from hatchery pens (m)",
+      title = "12S fish metabarcoding: Oncorhynchus reads") +
+  scale_color_manual(values = c("firebrick2", "dodgerblue"))
+
+linearModel.12S.plot
+
+ggsave("pdf_outputs/12SLog10linearModelOncorhynchus_long.pdf", width = 6, height = 2)
+
+```
+
+Linear model using log10 
+```{r}
+# create a new variable with the log10 mean reads
+lm.df <- mean.reads.df.to.plot %>% 
+  filter(taxon == "Oncorhynchus",
+         distance>-10) %>%
+  mutate(log_reads = log10(mean_reads))
+
+# incoming tide
+incoming_df <- lm.df %>%
+  filter(tide == "incoming")
+
+# outgoing tide
+outgoing_df <- lm.df %>%
+  filter(tide == "outgoing")
+
+# linear model
+incoming_model<-lm(log_reads~distance,data=incoming_df)
+
+summary(incoming_model)$r.squared
+
+outgoing_model <- lm(log_reads~distance, data=outgoing_df)
+
+summary(outgoing_model)$r.squared
+
+```
+R^2
+incoming = 0.62
+outgoing = 0.84
+
+I bet the fit is even better until 1000 m.
+
+```{r}
+# chop off the dataframe after 1000 m
+# incoming tide
+incoming_df <- lm.df %>%
+  filter(tide == "incoming", 
+         distance <1000)
+
+# outgoing tide
+outgoing_df <- lm.df %>%
+  filter(tide == "outgoing",
+         distance<1000)
+
+# linear model
+incoming_model<-lm(log_reads~distance,data=incoming_df)
+
+summary(incoming_model)$r.squared
+
+outgoing_model <- lm(log_reads~distance, data=outgoing_df)
+
+summary(outgoing_model)$r.squared
+
+```
+That does not improve the relationship for incoming and only slightly for outgoing.
+incoming = 0.70
+outgoing = 0.62
+
+
+
+## Revisiting the PCR replicate filter
+
+31 January 2023
+
+Does lower read depth in a given replicate change the species composition of that replicate?
+
+
+
