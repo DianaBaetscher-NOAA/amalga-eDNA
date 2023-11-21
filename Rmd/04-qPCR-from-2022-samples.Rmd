@@ -208,8 +208,22 @@ A lot! 189 rows!
 better to use the gBlock to push the quantification out farther (closer to 40). Or just go with the results as they are and change later if necessary.
 
 
+```{r checking-data-for-inhibition}
+merged.df %>%
+  filter(distance_from_pens == "0" &
+           CT != "Undetermined" &
+           depth == "0") %>%
+  select(`Extraction ID`, transect, distance_from_pens, depth, time_of_day, tide, CT, Quantity, Sample_Date) %>%
+  ggplot(aes(x = `Extraction ID`, y = CT, color = Sample_Date)) +
+  geom_point()
+  
+```
 
-```{r}
+
+
+# Plot data
+
+```{r vertical-transect}
 # first look at the vertical transect data
 merged.df %>%
   filter(transect == "perpendicular",
@@ -706,39 +720,4 @@ plot_grid(may5, p2, ncol = 1, align = "v", axis = 'l')
 
 ggsave("pdf_outputs/amalgaMay2022_comboWindPlot.pdf", width = 8, height = 9)
 ```
-
-
-
-
-
-
-
-
-
-```{r}
-samplesheet <- read_csv("C:/Users/diana.baetscher/Downloads/pcod_samplesheet.csv", skip = 19)
-
-meta <- read_xlsx("C:/Users/diana.baetscher/Downloads/20221117_PCodGTSeq_Metadata_ABLGSubset.xlsx") %>%
-  select(ABLG, AlternateID_s_)
-
-
-new_samplesheet <- samplesheet %>%
-  left_join(., meta, by = c("Sample_ID" = "AlternateID_s_")) %>%
-  mutate(Sample_ID = ABLG) %>%
-  select(-ABLG)
-  
-```
-```{r}
-new_samplesheet %>%
-  filter(Sample_Well == "H12")
-```
-
-
-```{r}
-new_samplesheet %>%
-  write_csv("C:/Users/diana.baetscher/Downloads/20221122_pcod_revised_samplesheet.csv")
-
-
-```
-
 

@@ -76,6 +76,7 @@ To figure out a color scheme, need min and max
 https://stackoverflow.com/questions/33227182/how-to-set-use-ggplot2-to-map-a-raster
 
 ```{r}
+library(tidyverse)
 library(ggplot2)
 library(raster)
 library(rasterVis)
@@ -151,6 +152,8 @@ zoomed.out
 
 ggsave("pdf_outputs/amalgaBathy.pdf")
 ```
+
+
 
 That's more zoomed out, but gives a better perspective...
 
@@ -237,11 +240,11 @@ highest.res <- more.zoom.df %>%
   mutate(value = ifelse(value >=0, NA, value)) # set land to NA to shade it gray
 
 highest.zoom.plot <- ggplot() +  
-  geom_tile(data=highest.res, aes(x=x, y=y, fill=value), alpha=0.8) + 
+  geom_tile(data=highest.res, aes(x=x, y=y, fill=value)) + 
   scale_fill_steps2(low = "navyblue",
                     mid = "dodgerblue4",
   high = "lightsteelblue1",
-  midpoint = -97,
+  midpoint = -99,
   #space = "Lab",
   na.value = "grey50",
   breaks = new.depth.scale) +
@@ -256,28 +259,32 @@ highest.zoom.plot <- ggplot() +
         axis.line = element_line(color = "black"),
         legend.position="right") +
       theme(legend.text = element_text(size = 8)) + 
-      theme(legend.key.height=unit(1.8, "cm")) +
+      theme(legend.key.height=unit(1, "cm")) +
       labs(fill = "Depth (m)",
          x = "Longitude (W)",
          y = "Latitude (N)")
 
 ```
 
-```{r}
-highest.zoom.plot +
-    geom_point(data = am, aes(x = long, y = lat, label = id), size = 1, color = "firebrick2")
+
+```{r plot-for-manuscript}
+transect2021 <- highest.zoom.plot +
+  geom_point(data = am, aes(x = long, y = lat), size = 1, color = "red") +
+  annotate(geom = "label", x = -134.795, y = 58.504, label = "Amalga Harbor", size = 4) +
+  #annotate(geom = "label", x = -134.81, y = 58.494, label = "2021 transect", size = 3, fontface = "bold") +
+  annotate(geom = "label", x = -134.78999, y = 58.496, label = "pens", size = 3, color = "black") +
+    annotate(geom = "label", x = -134.808, y = 58.492, label = "1000m", size = 3, color = "black") +
+      annotate(geom = "label", x = -134.825, y = 58.485, label = "2000m", size = 3, color = "black") +
+  scale_x_continuous(limits = c(-134.83, -134.78), breaks = c(-134.82, -134.80, -134.78)) +
+    scale_y_continuous(limits = c(58.47, 58.51)) 
+  #labs(title = "2021 transect") +
+  #scale_fill_continuous(breaks = c(0, -10, -25, -50, -75, -100, -125, -150, -200))
+  
+  
+ggsave("pdf_outputs/amalgaTransectBathyZoom.pdf", width = 6, height = 5)
 
 ```
-
-```{r}
-highest.zoom.plot +
-  geom_point(data = am, aes(x = long, y = lat), size = 1, color = "black") +
-  annotate(geom = "text", x = -134.785, y = 58.4999, label = "Amalga Harbor", size = 4, color = "white") +
-  annotate(geom = "label", x = -134.81, y = 58.494, label = "2021 transect", size = 3, fontface = "bold")
-
-ggsave("pdf_outputs/amalgaTransectBathyZoom.pdf", width = 7, height = 6)
-
-```
+at 560 m, it's basically the edge of Amalga Harbor.
 
 
 Add the transect to the zoomed out map:
@@ -287,6 +294,10 @@ map2021_out <- zoomed.out +
   annotate(geom = "text", x = -134.786, y = 58.51, label = "Amalga Harbor", size = 4, color = "white", fontface = "bold") +
   annotate(geom = "label", x = -134.83, y = 58.494, label = "2021 transect", size = 3, fontface = "bold")
   
+library(cowplot)
+
+plot_grid(map2021_out, transect2021, rows = 2)
+# if I choose to do that, I need to share the axes labels and legend.
 ```
 
 With these maps, I should be able to combine the two transect years with cowplot or similar.
@@ -296,10 +307,6 @@ For the 2022 data, I need the equivalent from the CTD casts for the transect.
 
 CTD data from 2022
 
-```{r}
-
-
-```
 
 
 

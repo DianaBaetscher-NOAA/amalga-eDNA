@@ -32,10 +32,34 @@ library(readxl)
 
 ```{r load-data}
 # read in the extraction database metadata
-meta <- read_xlsx("~/eDNA/extraction_database.xlsx", sheet = "metadata")
+meta <- read_xlsx("../data/extraction_database.xlsx", sheet = "metadata")
 
 # read in the combined qPCR results
-qpcr <- read_xlsx("~/eDNA/Amalga_study/qPCR_results_combined.xlsx")
+qpcr <- read_xlsx("../data/qPCR_results_combined.xlsx")
+
+```
+
+
+```{r quick-look-at-samples-for-inhibition-test}
+sample_list <- qpcr %>%
+  filter(Task == "UNKNOWN") %>%
+  select(`Sample Name`) %>%
+  unique()
+
+reruns <- read_xlsx("~/Desktop/2023-10-20_AmalgaInhibitionTest2021samples.xlsx", sheet = "Results", skip = 33)
+
+reruns_s <- reruns %>%
+  filter(Task == "UNKNOWN") %>%
+  select(`Sample Name`) %>%
+  unique()
+
+sample_list %>%
+  anti_join(., reruns_s) %>%
+  left_join(., meta, by = c("Sample Name" = "Extraction ID")) %>%
+  filter(`Sample Label` != "Ext_blank") %>%
+  select(`Sample Name`) %>%
+  unique() %>%
+  write_csv("csv_outputs/2021_samples_for_inhibition_test.csv")
 
 ```
 
