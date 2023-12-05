@@ -85,6 +85,12 @@ library(grid)
 library(scales)
 library(viridis)  # better colors for everyone
 library(ggthemes) # theme_map()
+library(patchwork)
+library(ggnewscale)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(ggspatial)
+
 ```
 
 ```{r}
@@ -103,6 +109,10 @@ zoom.df <- test_df %>%
   #filter(x > -135, x < -134, y > 58.2, y < 58.7) 
 
 zoom.df.w.gray <- zoom.df %>%
+  mutate(value = ifelse(value >=0, NA, value)) # set land to NA to shade it gray
+
+# fully zoomed out
+full_size_raster <- test_df %>%
   mutate(value = ifelse(value >=0, NA, value)) # set land to NA to shade it gray
 ```
 
@@ -150,7 +160,7 @@ zoomed.out <- ggplot() +
 
 zoomed.out
 
-ggsave("pdf_outputs/amalgaBathy.pdf")
+#ggsave("pdf_outputs/amalgaBathy.pdf")
 ```
 
 
@@ -194,7 +204,7 @@ zoomed.map <- ggplot() +
 
 zoomed.map
 
-ggsave("amalgaBathyZoom.pdf")
+#ggsave("amalgaBathyZoom.pdf")
 ```
 
 Add the transect line to this map?
@@ -228,24 +238,30 @@ am %>%
 zoomed.map +
   geom_point(data = am, aes(x = long, y = lat, label = id), size = 1, color = "firebrick2")
 
-ggsave("pdf_outputs/amalgaTransectBathy.pdf", height = 6, width = 7)
+#ggsave("pdf_outputs/amalgaTransectBathy.pdf", height = 6, width = 7)
 ```
 
 
 Zoom more
 
-```{r}
+```{r zoom-plot-for-mapping-figures}
 highest.res <- more.zoom.df %>%
-  filter(x > -134.85, x < -134.77, y > 58.455, y < 58.51) %>%
+  filter(x > -134.83, x < -134.779, y > 58.47, y < 58.51) %>%
   mutate(value = ifelse(value >=0, NA, value)) # set land to NA to shade it gray
 
 highest.zoom.plot <- ggplot() +  
-  geom_tile(data=highest.res, aes(x=x, y=y, fill=value)) + 
+  geom_tile(data=highest.res, aes(x=x, y=y, fill = value, color = value)) + 
   scale_fill_steps2(low = "navyblue",
                     mid = "dodgerblue4",
   high = "lightsteelblue1",
   midpoint = -99,
-  #space = "Lab",
+  space = "Lab",
+  na.value = "grey50",
+  breaks = new.depth.scale) +
+  scale_color_steps2(low = "navyblue",
+                    mid = "dodgerblue4",
+  high = "lightsteelblue1",
+  midpoint = -99,
   na.value = "grey50",
   breaks = new.depth.scale) +
   coord_equal() +
@@ -253,24 +269,29 @@ highest.zoom.plot <- ggplot() +
         panel.background = element_blank(),
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
-        axis.text = element_text(size = 12),
-        axis.title.x = element_text(size = 14, margin = margin(t=10)),
-        axis.title.y = element_text(size = 14, margin = margin(r=10)),
-        axis.line = element_line(color = "black"),
+        axis.text = element_text(size = 8),
+        axis.title.x = element_text(size = 10, margin = margin(t=10)),
+        axis.title.y = element_text(size = 10, margin = margin(r=10)),
+        axis.line = element_line(color = "gray50"),
         legend.position="right") +
-      theme(legend.text = element_text(size = 8)) + 
-      theme(legend.key.height=unit(1, "cm")) +
+       theme(legend.text = element_text(size = 6)) + 
+      # theme(legend.key.height=unit(1, "cm")) +
       labs(fill = "Depth (m)",
          x = "Longitude (W)",
-         y = "Latitude (N)")
+         y = "Latitude (N)") +
+  guides(color = F) +
+  scale_y_continuous(expand = c(0,0), breaks = c(58.48, 58.49, 58.50)) +
+  scale_x_continuous(expand = c(0,0))
+  
 
+highest.zoom.plot
 ```
 
 
 ```{r plot-for-manuscript}
 transect2021 <- highest.zoom.plot +
   geom_point(data = am, aes(x = long, y = lat), size = 1, color = "red") +
-  annotate(geom = "label", x = -134.795, y = 58.504, label = "Amalga Harbor", size = 4) +
+  #annotate(geom = "label", x = -134.795, y = 58.504, label = "Amalga Harbor", size = 4) +
   #annotate(geom = "label", x = -134.81, y = 58.494, label = "2021 transect", size = 3, fontface = "bold") +
   annotate(geom = "label", x = -134.78999, y = 58.496, label = "pens", size = 3, color = "black") +
     annotate(geom = "label", x = -134.808, y = 58.492, label = "1000m", size = 3, color = "black") +
@@ -281,7 +302,7 @@ transect2021 <- highest.zoom.plot +
   #scale_fill_continuous(breaks = c(0, -10, -25, -50, -75, -100, -125, -150, -200))
   
   
-ggsave("pdf_outputs/amalgaTransectBathyZoom.pdf", width = 6, height = 5)
+#ggsave("pdf_outputs/amalgaTransectBathyZoom.pdf", width = 6, height = 5)
 
 ```
 at 560 m, it's basically the edge of Amalga Harbor.
@@ -294,10 +315,7 @@ map2021_out <- zoomed.out +
   annotate(geom = "text", x = -134.786, y = 58.51, label = "Amalga Harbor", size = 4, color = "white", fontface = "bold") +
   annotate(geom = "label", x = -134.83, y = 58.494, label = "2021 transect", size = 3, fontface = "bold")
   
-library(cowplot)
 
-plot_grid(map2021_out, transect2021, rows = 2)
-# if I choose to do that, I need to share the axes labels and legend.
 ```
 
 With these maps, I should be able to combine the two transect years with cowplot or similar.
@@ -308,14 +326,192 @@ For the 2022 data, I need the equivalent from the CTD casts for the transect.
 CTD data from 2022
 
 
+```{r read-in-data-from-2022}
+ctd.2022 <- read_csv("../data/2022ctdDataframe.csv")
+
+ctd.2022
+
+# grab the data for May 5 and one tide for data points for the map
+one.set.2022 <- ctd.2022 %>%
+  filter(str_detect(time, "2022-05-05") &
+    tide == "AM_outgoing") %>%
+  dplyr::select(ctd_sample, lat, long) %>%
+  unique() %>%
+  filter(!ctd_sample %in% c("163024", "191935", "175337", "185047")) %>%
+  mutate(Year = "2022")
+
+fp <- am %>%
+  mutate(Year = "2021") %>%
+  bind_rows(one.set.2022)
+
+
+amalga_plot <- highest.zoom.plot +
+  new_scale_color() +
+  geom_point(data = fp, aes(x = long, y = lat, shape = Year, color = Year), size = 1.5) +
+  annotate(geom = "label", x = -134.789, y = 58.496, label = "pens", size = 3, color = "black") +
+    annotate(geom = "label", x = -134.808, y = 58.4865, label = "1000m", size = 3, color = "black") +
+      annotate(geom = "label", x = -134.826, y = 58.485, label = "2000m", size = 3, color = "black") +
+  scale_color_manual(values = c("coral3", "gold")) +
+  scale_shape_manual(values = c(16,17)) +
+  theme(
+    legend.position = "bottom",
+    legend.spacing.x = unit(0, "cm"),
+    legend.key = element_rect(fill = "white"),
+    legend.spacing = unit(3, "cm")
+  ) +
+  guides(fill = guide_legend(label.position = "bottom",
+                             nrow = 1,
+                             keywidth = unit(0.5, "cm"),
+                             title.hjust = unit(0.2, "cm"),
+                             title.vjust = unit(0.4, "cm")),
+         color = guide_legend(override.aes = list(size = 5)))
+                             
+
+amalga_plot
+
+ggsave("pdf_outputs/amalgaTransectBathyZoom.png", width = 6, height = 5)
+
+```
+
+```{r}
+
+# z.o <- zoomed.out +
+#   geom_point(data = one.set.2022, aes(x = long, y = lat), size = 1, color = "white") +
+#   annotate(geom = "label", x = -134.8, y = 58.51, label = "Amalga Harbor", size = 4, color = "black") +
+#   annotate(geom = "label", x = -134.86, y = 58.48, label = "background", size = 3, color = "black") +
+#     annotate(geom = "label", x = -134.80, y = 58.47, label = "transects", size = 3, color = "black") +
+#   theme(
+#      legend.position = "none"
+#   )
+# 
+#   
+# z.i.22 <- highest.zoom.plot +
+#   geom_point(data = one.set.2022, aes(x = long, y = lat), size = 1, color = "red") +
+#   annotate(geom = "label", x = -134.78999, y = 58.496, label = "pens", size = 3, color = "black") +
+#     annotate(geom = "label", x = -134.808, y = 58.492, label = "1000m", size = 3, color = "black") +
+#       annotate(geom = "label", x = -134.825, y = 58.485, label = "2000m", size = 3, color = "black") +
+#   scale_x_continuous(limits = c(-134.83, -134.78), breaks = c(-134.82, -134.80, -134.78)) +
+#     scale_y_continuous(limits = c(58.47, 58.51)) +
+#   theme(
+#   #   legend.position = "none",
+#   #   axis.text.x = element_blank(),
+#   #   axis.title.x = element_blank(),
+#   #   axis.ticks.x = element_blank(),
+#     axis.title.y = element_blank()  
+#     )
+# 
+# z.i.21 <- highest.zoom.plot +
+#   geom_point(data = am, aes(x = long, y = lat), size = 1, color = "red") +
+#   annotate(geom = "label", x = -134.78999, y = 58.496, label = "pens", size = 3, color = "black") +
+#     annotate(geom = "label", x = -134.808, y = 58.492, label = "1000m", size = 3, color = "black") +
+#       annotate(geom = "label", x = -134.825, y = 58.485, label = "2000m", size = 3, color = "black") +
+#   scale_x_continuous(limits = c(-134.83, -134.78), breaks = c(-134.82, -134.80, -134.78)) +
+#     scale_y_continuous(limits = c(58.47, 58.51)) +
+#    theme(
+#     #legend.position = "none",
+#     axis.text.x = element_blank(),
+#     axis.title.x = element_blank(),
+#     axis.ticks.x = element_blank(),
+#     axis.title.y = element_blank()
+#   )
+
+```
 
 
 
+```{r}
+library(ggOceanMaps)
+```
+```{r}
+# juneau <- data.frame(lon = -134.5162,
+#                      lat = 58.33718)
+#                      
+# if only I could figure out how to annotate a ggoceanmap                   
+interm_p <- basemap(limits = c(-138, -132, 56, 59), bathymetry = T, bathy.style = "rcb", rotate = T) +
+  labs(x = " ",
+       y = " ") +
+  theme(plot.margin = margin(r = 0.1, l = 0.1, t = 0.5, b = 0.5, unit = "cm")
+    
+  )
+  
+```
+
+
+```{r}
+amalga_plot2 <- highest.zoom.plot +
+  #scale_x_continuous(limits = c(-134.825, -134.785)) +
+  new_scale_color() +
+  geom_point(data = fp, aes(x = long, y = lat, shape = Year, color = Year), size = 1.5) +
+  annotate(geom = "label", x = -134.789, y = 58.496, label = "pens", size = 3, color = "black") +
+    annotate(geom = "label", x = -134.808, y = 58.4865, label = "1000m", size = 3, color = "black") +
+      annotate(geom = "label", x = -134.826, y = 58.485, label = "2000m", size = 3, color = "black") +
+  scale_color_manual(values = c("coral3", "gold")) +
+  scale_shape_manual(values = c(16,17)) +
+  theme(
+    legend.key = element_rect(fill = "white"),
+    legend.box.spacing = unit(0.1, "cm")) +
+  guides(color = guide_legend(override.aes = list(size = 5))) +
+    annotation_north_arrow(location = "bl", which_north = "true", 
+        pad_x = unit(0.5, "cm"), pad_y = unit(0.8, "cm"),
+        height = unit(0.8, "cm"), width = unit(0.8, "cm"),
+        style = north_arrow_orienteering(fill = c("black", "white")))
+
+  # ) +
+  # guides(fill = guide_legend(label.position = "bottom",
+  #                            nrow = 1,
+  #                            keywidth = unit(0.5, "cm"),
+  #                            title.hjust = unit(0.2, "cm"),
+  #                            title.vjust = unit(0.4, "cm")))
+  #                            
+
+amalga_plot2
+```
+
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+class(world)
+
+ak_plot <- ggplot(data = world) +
+  geom_sf() +
+  theme(panel.background=element_rect(fill = 'aliceblue')) +
+  coord_sf(xlim = c(-175, -125), ylim = c(45, 65), expand = F) +
+  scale_y_continuous(breaks = c(45,55,65)) +
+  annotate("rect", xmin = -137, xmax = -132, ymin = 56, ymax = 59, color = "red", fill = NA) +
+  annotate("text", x = -155, y = 50, label = "Pacific Ocean", color = "gray20", size = 3.5) +
+   annotate("text", x = -145, y = 57, label = "Gulf of\nAlaska", color = "gray20", size = 3) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    plot.margin = margin(r = 0.1, l = 0.1, t = 0.5, b = 0.5, unit = "cm")
+  ) +
+  annotation_scale(location = "bl", 
+                  bar_cols = c("gray50","white"),
+                  line_width = 0.4,
+                  height = unit(0.2, "cm"),
+                  pad_x = unit(0.25, "cm"),
+                  pad_y = unit(0.25, "cm"),
+                  text_pad = unit(0.15, "cm")) +
+    annotation_north_arrow(location = "bl", which_north = "true", 
+        pad_x = unit(0.5, "cm"), pad_y = unit(0.8, "cm"),
+        height = unit(0.5, "cm"), width = unit(0.5, "cm"),
+        style = north_arrow_orienteering(fill = c("gray50", "gray20")))
+
+ak_plot
+```
 
 
 
+Combine the ak plot and the Amalga plot
+```{r}
 
+(ak_plot | interm_p) / amalga_plot2 + plot_layout(nrow = 2, heights = c(2,3)) +
+  plot_annotation(tag_levels = 'A') &
+  theme(plot.tag = element_text(size = 8),
+        plot.margin = margin(0.1, 0.1, 0.1, 0.1, "cm"))
 
+ggsave("pdf_outputs/amalga_combined_maps.png", width = 7, height = 7)
+
+```
 
 
 

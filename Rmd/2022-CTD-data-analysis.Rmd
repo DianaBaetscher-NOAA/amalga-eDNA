@@ -17,41 +17,42 @@ library(hms)
 library(dplyr)
 library(ggplot2)
 library(ggtext)
+library(tidyverse)
 
 ```
 
 
 ```{r read-in-csv-files}
 # read in all files in the reheaded directory
-dataFiles <- lapply(Sys.glob("../data/reheaded/*.csv"), read_csv)
+#dataFiles <- lapply(Sys.glob("../data/reheaded/*.csv"), read_csv)
 
 
 # turn each of the data frames in that list into a single data frame
-ctd.data <- do.call("rbind", dataFiles)
+#ctd.data <- do.call("rbind", dataFiles)
 
-
+ctd.w.tides <- read_csv("../data/2022ctdDataframe.csv")
 ```
 
 
 ```{r data-clean-up}
 # organize the headers, etc.
-ctd.data2 <- ctd.data %>%
-  rename(pressure_decibar = `Pressure (Decibar)`, depth_m = `Depth (Meter)`, temp_c = `Temperature (Celsius)`, conductivity = `Conductivity (MicroSiemens per Centimeter)`, sp_conduct = `Specific conductance (MicroSiemens per Centimeter)`, salinity = `Salinity (Practical Salinity Scale)`, sound_velocity = `Sound velocity (Meters per Second)`, density = `Density (Kilograms per Cubic Meter)`, file = `% File name`, lat = `% Start latitude`, long = `% Start longitude`, duration = `% Cast duration (Seconds)`, time = `% Cast time (local)`) %>%
-  separate(file, into = c(NA, NA, "ctd_sample"), sep = "_") %>%
-  select(ctd_sample, time, lat, long, depth_m, salinity, density, pressure_decibar, temp_c, conductivity, sp_conduct, sound_velocity, duration)
+# ctd.data2 <- ctd.data %>%
+#   rename(pressure_decibar = `Pressure (Decibar)`, depth_m = `Depth (Meter)`, temp_c = `Temperature (Celsius)`, conductivity = `Conductivity (MicroSiemens per Centimeter)`, sp_conduct = `Specific conductance (MicroSiemens per Centimeter)`, salinity = `Salinity (Practical Salinity Scale)`, sound_velocity = `Sound velocity (Meters per Second)`, density = `Density (Kilograms per Cubic Meter)`, file = `% File name`, lat = `% Start latitude`, long = `% Start longitude`, duration = `% Cast duration (Seconds)`, time = `% Cast time (local)`) %>%
+#   separate(file, into = c(NA, NA, "ctd_sample"), sep = "_") %>%
+#   dplyr::select(ctd_sample, time, lat, long, depth_m, salinity, density, pressure_decibar, temp_c, conductivity, sp_conduct, sound_velocity, duration)
 
 
 # add tide info
-ctd.w.tides <- ctd.data2 %>%
-  mutate(tide = ifelse(hour(hms::as_hms(time)) >12, "PM_incoming", "AM_outgoing")) %>%
-    mutate(tide = ifelse(day(ymd_hms(time)) == "10", "PM_incoming", tide)) %>%
-      mutate(tide = ifelse(day(ymd_hms(time)) == "25", "AM_incoming", tide))
-  
+# ctd.w.tides <- ctd.data2 %>%
+#   mutate(tide = ifelse(hour(hms::as_hms(time)) >12, "PM_incoming", "AM_outgoing")) %>%
+#     mutate(tide = ifelse(day(ymd_hms(time)) == "10", "PM_incoming", tide)) %>%
+#       mutate(tide = ifelse(day(ymd_hms(time)) == "25", "AM_incoming", tide))
+#   
 
-ctd.w.tides %>%
-  select(lat) %>%
-  unique() %>%
-  arrange(lat)
+# ctd.w.tides %>%
+#   dplyr::select(lat) %>%
+#   unique() %>%
+#   arrange(lat)
 
 ```
 
@@ -64,8 +65,8 @@ ctd.depth <- ctd.w.tides %>%
 
 Output that dataframe so that I can plot the transect on the bathy map
 ```{r}
-ctd.depth %>%
-  write_csv("csv_outputs/2022ctdDataframe.csv")
+# ctd.depth %>%
+#   write_csv("csv_outputs/2022ctdDataframe.csv")
 
 ```
 
@@ -78,7 +79,7 @@ library(ggrepel)
 # maybe filter by date first
 ctd.w.tides %>%
   filter(day(ymd_hms(time)) == "5") %>%
-  select(ctd_sample, lat, long) %>%
+  dplyr::select(ctd_sample, lat, long) %>%
   unique() %>%
   ggplot() +
   geom_point(aes(x = long, y = lat)) +
@@ -91,7 +92,7 @@ Best way to connect ctd data (ctd_sample) to distance from pens via lat/lon?
 ```{r}
 ctd.grp.df <- ctd.w.tides %>%
   #filter(day(ymd_hms(time)) == "25") %>%
-  select(ctd_sample, lat, long, time) %>%
+  dplyr::select(ctd_sample, lat, long, time) %>%
   unique() %>%
   arrange(time) %>%
   # round the lat/lon and then group by both lat/lon
@@ -107,6 +108,7 @@ ctd.grp.df <- ctd.w.tides %>%
 ctd.grp.df$grp_id <- as.character(ctd.grp.df$grp_id)
   
 ctd.grp.df %>%
+  #filter(str_detect(time," 2022-05-05")) %>%
   ggplot() +
   geom_point(aes(x = long, y = lat, color = grp_id), size = 2) +
   geom_text_repel(aes(x = long, y = lat, label = ctd_sample)) +
@@ -124,7 +126,7 @@ But that only includes data from May 5, rather than all of the dates.
 ```{r}
 tmp <- ctd.w.tides %>%
   #filter(day(ymd_hms(time)) == "5") %>%
-  select(ctd_sample, lat, long, time) %>%
+  dplyr::select(ctd_sample, lat, long, time) %>%
   unique() %>%
   arrange(time) %>%
   # round the lat/lon and then group by both lat/lon
@@ -138,13 +140,13 @@ tmp <- ctd.w.tides %>%
 tmp$grp_id <- as.character(tmp$grp_id)
 tmp$day <- as.character(tmp$day)
 
-tmp %>% # add a group id for each lat/lon
-  mutate()
-  filter(grp_id %in% c(11,6,7,9)) %>%
-  ggplot() +
-  geom_point(aes(x = long, y = lat, color = grp_id), size = 2) +
-  #geom_text_repel(aes(x = long, y = lat, label = ctd_sample)) +
-  theme_bw()
+# tmp %>% # add a group id for each lat/lon
+#   mutate()
+#   filter(grp_id %in% c(11,6,7,9)) %>%
+#   ggplot() +
+#   geom_point(aes(x = long, y = lat, color = grp_id), size = 2) +
+#   #geom_text_repel(aes(x = long, y = lat, label = ctd_sample)) +
+#   theme_bw()
 
 ```
 
@@ -162,7 +164,7 @@ library(geosphere)
 ```{r}
 ctd.simple <- ctd.grp.df %>%
   ungroup() %>%
-  select(ctd_sample, lat, long, time)
+ dplyr::select(ctd_sample, lat, long, time)
 ```
 
 
@@ -204,9 +206,53 @@ dist.matrix %>%
 
 
 Now I can associate the ctd_sample and grp_id numbers with the distance from pens
-```{r}
+```{r data-used-for-table1}
 ctd.grp.w.data <- ctd.grp.df %>%
   left_join(., ctd.w.tides)
+
+#salinity and temp at surface
+ctd.grp.w.data %>%
+  filter(str_detect(time, "2022-05-05")) %>%
+  group_by(tide) %>%
+  filter(depth_m < 0.2) %>%
+  summarise(mean(salinity))
+
+ctd.grp.w.data %>%
+  filter(str_detect(time, "2022-05-05")) %>%
+  group_by(tide) %>%
+  filter(depth_m < 0.2) %>%
+  summarise(min(temp_c))
+
+#salinity and temp at 5 m depth
+ctd.grp.w.data %>%
+  filter(str_detect(time, "2022-05-05")) %>%
+  group_by(tide) %>%
+  filter(depth_m < 5.2) %>%
+  filter(depth_m >4.8) %>%
+  arrange(depth_m) %>%
+  summarise(max(salinity))
+
+ctd.grp.w.data %>%
+  filter(str_detect(time, "2022-05-05")) %>%
+  group_by(tide) %>%
+  filter(depth_m < 5.2) %>%
+  filter(depth_m >4.8) %>%
+  summarise(max(temp_c))
+
+#salinity and temp at 10 m depth
+ctd.grp.w.data %>%
+  filter(str_detect(time, "2022-05-05")) %>%
+  group_by(tide) %>%
+ filter(depth_m < 10.2) %>%
+  filter(depth_m >9.8) %>%
+  summarise(max(salinity))
+
+ctd.grp.w.data %>%
+  filter(str_detect(time, "2022-05-05")) %>%
+  group_by(tide) %>%
+ filter(depth_m < 10.2) %>%
+  filter(depth_m >9.8) %>%
+  summarise(max(temp_c))
 
 ```
 
@@ -272,12 +318,12 @@ My logic previously was that the stations were sampled in the same order in the 
 Let's use the 5/5/2022 date as a first test case.
 
 ```{r}
-meta <- read_csv("../data/2022_amalga_metadata_orderly.csv")
+meta <- read_xlsx("../data/Amalga2022_cleanMetadata.xlsx")
 
 dist <- meta %>%
   filter(Sample_Date == "2022_05_05") %>%
   arrange(distance_from_pens) %>%
-  select(distance_from_pens, transect, parallel_transect) %>%
+  select(distance_from_pens, transect) %>%
   unique() %>%
   arrange(desc(transect), distance_from_pens)
 

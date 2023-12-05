@@ -1,0 +1,1614 @@
+---
+title: "qPCR re-extraction inhibition results"
+output: html_notebook
+---
+
+18 October 2023
+
+Some of the amalga samples are inhibited and I'm re-running the 2021 samples and May, 5, 2022 samples to test for inhibition using an IPC.
+
+
+```{r load-libraries}
+library(readxl)
+library(patchwork)
+library(tidyverse)
+```
+
+
+
+## Quick look at 2021 samples to choose a subset to test for inhibition
+
+```{r load-data}
+# read in the extraction database metadata
+metadata <- read_xlsx("../data/extraction_database.xlsx", sheet = "metadata")
+
+# read in the combined qPCR results
+qpcr <- read_xlsx("../data/qPCR_results_combined.xlsx")
+
+# organize color palette
+mycols <- c("coral3", "cadetblue4")
+```
+
+
+### Metadata QC
+
+```{r meta-qc}
+# clean up the metadata format and variable names
+frsh_meta <- metadata %>%
+  mutate(tide = ifelse(`Sample Code` == "AM", "incoming", "outgoing")) %>%
+  mutate(tide = ifelse(is.na(`Sample Code`) | `Sample Code` == "Creek", NA, tide)) %>%
+  rename(sample = `Extraction ID`, location = `Sample Code`, label = `Sample Label`, type = `Sample_type`) %>%
+  # distance needs to be a numeric variable without meters attached
+  mutate(dist_grp = ifelse(location %in% c("PM", "AM"), label, NA))
+
+# strip off the meters on dist_grp so we can order them properly
+frsh_meta$dist_grp <- gsub("[^0-9.-]", "", frsh_meta$dist_grp)
+
+# make another variable that is numeric distance (not character)
+clean_meta <- frsh_meta %>%
+  mutate(distance = as.numeric(dist_grp)) %>%
+  # remove some of the unneeded variables
+  dplyr::select(sample, location, label, type, tide, dist_grp, distance) %>%
+  # add info to the creek samples
+  mutate(label = ifelse(location == "Creek", "freshwater", label)) %>%
+  mutate(label = ifelse(is.na(location), "blank", label))
+
+
+clean_meta
+```
+
+## Check 2021 samples for inhibition
+
+23 October 2023
+
+A plate of 2021 samples with high-med-low-no amplification with the IPC to check for inhibition. 
+
+In actuality, I added 2 ul of each standard to each reaction, so if the gBlock standard was at 10,000 copies for 1 ul, that would translate to 20,000 copies in 2 ul. I'm not going to worry about that particularly in this moment, but it's something to keep in mind.
+
+This is not true for the multiplexed Moa and Oke standards because 2 ul should constitute 1 ul of each standard.
+
+However, there were 2 ul of each DNA extract added to each reaction, so to get a per 1 ul copy number, I would need to divide the quantity by 2.
+
+
+```{r test-plate}
+# read in temp sample info
+# test2021 <- read_xlsx("../data/qpcr/2023-10-20_AmalgaInhibitionTest2021samples.xlsx", sheet = "Results", skip = 33) 
+# 
+# test2021$`Ct Mean` <- round(test2021$`Ct Mean`,3)
+
+```
+Quick look at efficiency:
+```{r}
+# E <- test2021 %>%
+#   mutate(efficiency = -1 + 10^ (-1/Slope))
+# 
+# E %>% filter(Task == "STANDARD" &
+#                `Target Name` == "Oke_COI")
+```
+
+
+
+```{r test-plate-for-inhibition-w-ipc}
+# p <- test2021 %>%
+#   filter(Task == "UNKNOWN") %>%
+#   ggplot(aes(x =`Sample Name` , y = `Ct Mean` , color = `Target Name`)) +
+#   geom_point() +
+#   theme_bw() +
+#   theme(
+#     axis.text.x = element_text(angle = 90)
+#   ) +
+#   #facet_grid(rows = vars(`Target Name`))  +
+#   scale_y_continuous(breaks = seq(22,40, 1))
+# 
+# p + annotate("rect", xmin = "e00025", xmax = "e00190", ymin = 26, ymax = 28, alpha = 0.2, fill = "salmon")
+#   
+# ggsave("pdf_outputs/inhibitionTest2021samples.pdf", width = 6, height = 4)
+```
+
+
+1. Confirm that the Moa IPC is at ~1000 copies:
+```{r checking-Moa-IPC}
+# What's the CT value for 1000 copies?
+# test2021 %>%
+#   filter(`Target Name` == "Moa_IPC" &
+#            Task == "STANDARD")
+
+```
+According to this, the 1000 standard is at ~26 CT.
+
+
+
+## plate 2 and plate 3
+
+```{r}
+# plate2 <- read_xlsx("../data/qpcr/2023-10-26_amalga_inhibition_test_plate2.xlsx", sheet = "Results", skip = 32)
+# 
+# plate2 %>%
+#   filter(Task == "STANDARD" &
+#            `Target Name` == "Moa_IPC" &
+#            Quantity == "1000") 
+```
+
+Mean value is 26.18; so anything from 26-28.18 should be ok.
+
+```{r}
+# test for inhibition in plate 2
+# p2 <- plate2 %>%
+#   filter(Task != "STANDARD") %>%
+#   ggplot(aes(x = reorder(`Sample Name`, Well), y = `Ct Mean` , color = `Target Name`)) +
+#   geom_point() +
+#   theme_bw() +
+#   theme(
+#     axis.text.x = element_text(angle = 90)
+#   ) +
+#   #facet_grid(rows = vars(`Target Name`))  +
+#   scale_y_continuous(breaks = seq(18,45, 1)) 
+# 
+# p2 + annotate("rect", xmin = "1", xmax = "Sample D", ymin = 26.18, ymax = 28.18, alpha = 0.2, fill = "salmon")
+
+```
+
+Which samples are those?
+```{r}
+# plate2 %>%
+#   filter(Task != "STANDARD" &
+#            `Target Name` == "Moa_IPC" &
+#            `Ct Mean` > 28.18) %>%
+#   group_by(`Sample Name`) %>%
+#   tally()
+
+```
+7 inhibited samples in Plate 2
+
+
+```{r plate3-data}
+# plate3 <- read_xlsx("../data/qpcr/2023-10-26_amalga_inhibition_test_plate3.xlsx", sheet = "Results", skip = 34)
+# 
+# plate3 %>%
+#   filter(Task == "STANDARD" &
+#            `Target Name` == "Moa_IPC" &
+#            Quantity == "1000") 
+
+
+```
+CT is higher than on plate 2: 28, which maybe isn't surprising since I used a different dilution of Moa at 10^3. Probably worth re-quantifying and making a new 1000 copy dilution.
+
+```{r}
+# test for inhibition in plate 2
+# p3 <- plate3 %>%
+#   filter(Task != "STANDARD") %>%
+#   ggplot(aes(x = reorder(`Sample Name`, Well), y = `Ct Mean` , color = `Target Name`)) +
+#   geom_point() +
+#   theme_bw() +
+#   theme(
+#     axis.text.x = element_text(angle = 90)
+#   ) +
+#   #facet_grid(rows = vars(`Target Name`))  +
+#   scale_y_continuous(breaks = seq(18,45, 1)) 
+# 
+# p3 + annotate("rect", xmin = "1", xmax = "Sample D", ymin = 28, ymax = 30, alpha = 0.2, fill = "salmon")
+
+```
+Mostly uninhibited, which is good.
+
+```{r}
+# plate3 %>%
+#   filter(Task != "STANDARD" &
+#            `Target Name` == "Moa_IPC" &
+#            `Ct Mean` > 30) %>%
+#   group_by(`Sample Name`) %>%
+#   tally()
+
+
+```
+
+Two of the four samples are really close to the edge of inhibition or not. 
+
+First three plates:
+6, 7, and 4 inhibited samples.
+
+
+```{r function-to-read-in-qPCR-results-and-plot}
+qpcr_inhibition_test <- function(file){
+  
+        plate <- read_xlsx(file, sheet = "Results", skip = 34)
+        
+        ipc_ct_val <- plate %>%
+          filter(Task == "STANDARD" &
+                   `Target Name` == "Moa_IPC" &
+                   Quantity == "1000") 
+        
+        print(ipc_ct_val)
+        
+        # test for inhibition
+        p <- plate %>%
+          filter(Task != "STANDARD") %>%
+          ggplot(aes(x = reorder(`Sample Name`, Well), y = `Ct Mean` , color = `Target Name`)) +
+          geom_point() +
+          theme_bw() +
+          theme(
+            axis.text.x = element_text(angle = 90)
+          ) +
+          #facet_grid(rows = vars(`Target Name`))  +
+          scale_y_continuous(breaks = seq(18,45, 1)) 
+        
+        # display plot
+        plot <- p + annotate("rect", xmin = "1", xmax = "NTC", ymin = ipc_ct_val$`Ct Mean`, ymax = (ipc_ct_val$`Ct Mean`)+2, alpha = 0.2, fill = "salmon")
+        
+        print(plot)
+        
+        # plot the standards
+        std_plot <- plate %>%
+          filter(Task == "STANDARD") %>%
+          ggplot(aes(x = reorder(`Sample Name`, Well), y = `Ct Mean` , color = `Target Name`)) +
+          geom_point() +
+          theme_bw() +
+          theme(
+          axis.text.x = element_text(angle = 90)
+        ) +
+        scale_y_continuous(breaks = seq(18,40, 1)) 
+        
+        print(std_plot)
+        
+        # which samples are inhibited?
+        plate %>%
+        filter(Task != "STANDARD" &
+           `Target Name` == "Moa_IPC" &
+           `Ct Mean` > ipc_ct_val$`Ct Mean`+2) %>%
+          dplyr::select(`Sample Name`, `Ct Mean`) %>%
+          unique()
+      
+}
+
+```
+
+
+
+
+```{r test-function-for-plotting-inhibition-w-plate-4}
+# plate 4
+#qpcr_inhibition_test("../data/qpcr/2023-10-27_Amalga_inhibition_test_plate4.xlsx")
+
+```
+
+Ignoring the NTC, there are seven inhibited samples from plate 4.
+
+```{r plate-5-inhibition}
+# plate 5
+#qpcr_inhibition_test("../data/qpcr/2023-10-27_Amalga_inhibition_test_plate5.xlsx")
+```
+13 inhibited samples
+
+
+```{r plate-6-inhibition}
+# plate 6
+#qpcr_inhibition_test("../data/qpcr/2023-10-27_Amalga_inhibition_test_plate6.xlsx")
+
+```
+
+Really? All of the samples from Plate 6?
+
+```{r plate7}
+#qpcr_inhibition_test("../data/qpcr/2023-10-27_Amalga_inhibition_test_plate7.xlsx")
+```
+None of those look particularly inhibited, but I'll go with the three that are clearly outside the 2 Ct range.
+
+Ok, so the samples that need to be diluted and re-run are:
+
+e00161
+e00169
+e00180
+
+All samples from plate 6
+
+e00104				
+e00114				
+e00123				
+e00105				
+e00115				
+e00124				
+e00106				
+e00126				
+e00127				
+e00131
+e00132				
+e00122				
+e00133
+e00078				
+e00086				
+e00096				
+e00097				
+e00099				
+e00102				
+e00103
+e00050		
+e00060		
+e00069			
+e00070
+e00019	
+e00026	
+e00028	
+e00034	
+e00035	
+e00037
+e00038
+e00025	
+e00029	
+e00056	
+e00128
+e00142		
+e00190
+
+## Combine data
+
+Patterns across samples of inhibition?? Look at metadata.
+
+Read in all combined data:
+```{r}
+file_path <- "../data/qpcr/"
+
+file_path %>%
+  list.files() %>%
+  .[str_detect(., ".xlsx")] -> xlsx_file_names
+
+# Load everything into the Global Environment
+xlsx_file_names %>%
+  purrr::map(function(file_name){ # iterate through each file name
+  
+  read_xlsx(paste0(file_path, file_name), sheet = "Results", skip = 34)
+  
+}) -> df_list_read2 # Assign to a list
+
+# combine all files into one df
+# nothing was done to the quantities in this df
+all_plates2021 <- bind_rows(df_list_read2, .id = "plate") %>%
+    mutate(efficiency = -1 + 10^ (-1/Slope))
+
+# calculate efficiency for all plates
+all_plates2021 %>%
+  group_by(`Target Name`) %>%
+  summarise(E = mean(efficiency))
+
+```
+
+
+```{r combine-qPCR-and-metadata}
+# but I'm going to want to add a column that designates whether the sample is inhibited or not.
+qpcr_data_w_metadata <- all_plates2021 %>%
+  left_join(., clean_meta, by = c("Sample Name" = "sample"))
+
+qpcr_data_w_metadata %>%
+  filter(Task == "UNKNOWN" &
+           CT != "Undetermined") %>%
+  dplyr::select(`Sample Name`, `Ct Mean`, dist_grp, tide, distance) %>%
+  unique()
+
+```
+
+
+
+## Quick check on diluted inhibited samples
+
+Plate 1
+
+```{r plate1-diluted}
+#qpcr_inhibition_test("../data/diluted_qpcr/2023-10-31_Amalga_inhibited_diluted_plate1.xlsx")
+
+```
+
+In that first plate, there are two samples that are still potentially (barely) inhibited.
+
+A bunch of the ones that amplified are out past a Ct of 35, which would be <10 copies.
+
+
+```{r diluted-plate2}
+#qpcr_inhibition_test("../data/diluted_qpcr/2023-10-31_Amalga_inhibited_diluted_plate2.xlsx")
+
+```
+
+None of the samples in plate 2 remain inhibited post-dilution. Excellent.
+
+
+For the diluted samples, I'll want to multiply the quantity by 10 thanks to the 1:10 dilution factor.
+
+
+```{r dilution-plate3}
+#qpcr_inhibition_test("../data/diluted_qpcr/2023-10-31_Amalga_inhibited_diluted_plate3.xlsx")
+
+```
+
+
+two samples that are barely inhibited... look at the field replicates to get a sense for if the quantity if far off due to persistent inhibition.
+
+
+Similar to the undiluted plates, I'll want to read in all three results documents and then analyze them in tandem.
+
+### Diluted samples from 2021
+
+```{r read-in-list-of-inhibited-sample-results}
+diluted_file_path <- "../data/diluted_qpcr/"
+
+diluted_file_path %>%
+  list.files() %>%
+  .[str_detect(., ".xlsx")] -> xlsx_file_names_diluted
+
+# Load everything into the Global Environment
+xlsx_file_names_diluted %>%
+  purrr::map(function(file_name){ # iterate through each file name
+  
+  read_xlsx(paste0(diluted_file_path, file_name), sheet = "Results", skip = 34)
+  
+}) -> df_list_read3 # Assign to a list
+
+diluted_plates <- bind_rows(df_list_read3, .id = "plate")
+
+# multiple quantities by 10 because of 1:10 dilution factor
+diluted_plates_10x <- diluted_plates %>%
+  mutate(quant = Quantity*10) %>%
+  mutate(inhibited = "yes")
+
+# list of inhibited samples
+inhibited_list <- diluted_plates_10x %>%
+  filter(Task =="UNKNOWN") %>%
+  dplyr::select(`Sample Name`) %>%
+  unique()
+
+```
+
+
+
+
+### Combined data from inhibited samples and uninhibited samples
+
+```{r}
+combined_data <- all_plates2021 %>%
+  anti_join(., inhibited_list) %>%
+  bind_rows(., diluted_plates_10x) %>%
+  filter(Task == "UNKNOWN" & 
+           `Target Name` == "Oke_COI") %>%
+  #select(`Sample Name`, `Quantity Mean`, quant) %>%
+  mutate(quant = ifelse(is.na(quant), Quantity, quant)) %>%
+  #filter(!is.na(quant)) %>%
+  mutate(quant_per_ul = quant/2)
+
+plotA_2021 <- combined_data %>%
+  left_join(., clean_meta, by = c("Sample Name" = "sample")) %>%
+  filter(!is.na(tide)) %>%
+  ggplot(aes(x = distance, y = log10(quant_per_ul), color = tide, shape = tide)) +
+  geom_point(size = 2, alpha = 0.65) +
+  geom_smooth(method = "lm", se = F) +
+  #facet_grid(rows = vars(tide)) +
+  theme_bw() +
+   scale_shape_manual(values = c(16, 18)) +
+  scale_color_manual(values = mycols) +
+  labs(x = "Distance from pens (m)",
+       y = "DNA copy number/uL (log10)",
+       color = "Tide",
+       shape = "Tide") +
+  theme(
+    #axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(margin = margin(r = 10)),
+        legend.position = c(0.8, 0.8)
+  )
+
+#ggsave("pdf_outputs/Amalga2021_qPCR_by_tide.png", width = 5, height = 4)
+```
+At incoming vs. outgoing tides, the concentration of chum salmon DNA at ~1000 m looks different.
+Make a note of the LOD/LOQ in the figure legend, but include detections below the LOQ on the plot.
+
+Make a plot of the CV for each distance:
+```{r cv-by-distance-2021}
+plotB_2021 <- combined_data %>%
+  left_join(., clean_meta, by = c("Sample Name" = "sample")) %>%
+  filter(!is.na(tide) & 
+           !is.na(quant_per_ul)) %>%
+  group_by(distance, tide) %>%
+  mutate(sd = sd(log10(quant_per_ul))) %>%
+  mutate(mean = mean(log10(quant_per_ul))) %>%
+  dplyr::select(distance, sd, mean, tide) %>%
+  unique() %>%
+  mutate(cv = sd/mean) %>%
+  ggplot(aes(x = distance, y = cv, color = tide, shape = tide)) +
+  geom_point(size = 2, alpha = 0.85) +
+  theme_bw() +
+   scale_shape_manual(values = c(16, 18)) +
+  scale_color_manual(values = mycols) +
+  labs(x = "Distance from pens (m)",
+       y = "CV",
+       color = "Tide",
+       shape = "Tide") +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10)),
+        #legend.position = c(0.8, 0.8)
+    legend.position = "none"
+  )
+
+#ggsave("pdf_outputs/Amalga2021_qPCR_by_tideCV.png", width = 5, height = 4)
+
+# combine plots A and B
+
+plotA_2021 + plotB_2021 + plot_layout(ncol = 1, heights = c(2,1)) +
+  plot_annotation(tag_levels = "A")
+
+ggsave("pdf_outputs/Amalga2021_transect_and_CV.png", width = 5, height = 6)
+```
+
+
+
+
+
+Which samples are inhibited?
+```{r inhibited-samples-plot}
+combined_data %>%
+  left_join(., clean_meta, by = c("Sample Name" = "sample")) %>%
+    filter(!is.na(tide)) %>%
+  mutate(inhibited = ifelse(is.na(inhibited), "no", "yes")) %>%
+  ggplot(aes(x = distance, y = log10(quant_per_ul))) +
+  geom_point(aes(color = inhibited), alpha = 0.8) +
+  facet_grid(rows = vars(tide), labeller = label_both) +
+  theme_bw() +
+  labs(x = "Distance from pens (m)",
+       y = "DNA copy number/uL (log10)") +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10)),
+    legend.position = c(0.9, 0.9)
+  ) +
+  scale_color_manual(values = c("cadetblue4", "coral3"))
+
+ggsave("pdf_outputs/Amalga2021_qPCR_inhibition_by_tide.png", width = 6, height = 5)
+```
+Notes about inhibition:
+- generally closer to the nearshore
+- substantially more inhibition during outgoing tide
+
+```{r}
+combined_data %>%
+  left_join(., clean_meta, by = c("Sample Name" = "sample")) %>%
+  filter(inhibited == "yes")%>%
+  group_by(`Sample Name`, tide) %>%
+  tally() %>%
+  group_by(tide) %>%
+  tally()
+```
+
+```{r}
+combined_data %>%
+  left_join(., clean_meta, by = c("Sample Name" = "sample")) %>%
+  filter(tide == "outgoing" & distance < 750) %>%
+  group_by(inhibited) %>%
+  tally() %>%
+  mutate(n/3)
+```
+```{r}
+26/40
+```
+
+
+
+
+1. Okay, if I wanted to re-run the qPCR for the 2022 samples (all or part), how many would that be? (171 samples)
+```{r}
+171/24
+
+```
+
+
+2. LOD/LOQ calculations - can I use the standard curves from the plates I already ran?
+Potential concern with low PCR efficiency?
+
+LOD: six 4-fold serial dilutions with 8-24 replicates per dilution. Calculate lowest initial concentration with 95% detection.
+LOQ: same dilution series: lowest initial concentration with CV < 35%
+
+
+
+If I wanted to go back and use my existing standards for the calculations...
+Standards from the dilution plates too
+```{r}
+# but the first plate didn't have Moa at 10^6 copies, so let's drop that one from this calculation
+standards <- all_plates2021 %>%
+  filter(Task == "STANDARD" &
+           `Target Name` == "Oke_COI" &
+           CT != "Undetermined" &
+           !`Sample Name` %in% c("Sample 1", "std_10")) 
+
+# add dilution plate standards
+dil_stds <- diluted_plates_10x %>%
+  filter(Task == "STANDARD" &
+           `Target Name` == "Oke_COI")
+
+stds_combo <- bind_rows(standards, dil_stds)
+  
+# make the CT numeric
+stds_combo$CT <- as.numeric(stds_combo$CT)
+
+# create linear model
+lm_fit <- lm(data = stds_combo, CT ~ log10(Quantity))
+
+summary(lm_fit)
+
+# plot that model
+stds_combo %>%
+  ggplot(aes(x = log10(Quantity), y = CT)) +
+  geom_jitter(width = 0.1, height = 0.01) +
+  #geom_smooth(method = "lm")
+  geom_line(data = fortify(lm_fit), aes(x = `log10(Quantity)`, y = .fitted))
+
+
+
+```
+
+```{r info-for-lod}
+# check coefficient of variation
+stds_combo %>%
+  group_by(Quantity) %>%
+  summarise(cv = sd(CT)/mean(CT)*100)
+
+# output test standards file for LoD calculator
+std_for_lod <- stds_combo %>%
+  dplyr::select(`Well Position`, Reporter, `Sample Name`, CT, Quantity, `Target Name`) %>%
+  rename(Well = `Well Position`, Fluor = Reporter, Sample = `Sample Name`, Cq = CT, SQ = Quantity, Target = `Target Name`) 
+
+```
+
+
+## Compare linear regression models
+
+```{r linear-regression}
+# qpcr_w_meta <- combined_data %>%
+#   left_join(., clean_meta, by = c("Sample Name" = "sample")) 
+# 
+# qpcr_w_meta %>%
+#   filter(!is.na(tide)) %>%
+#   ggplot(aes(x = distance, y = log10(quant_per_ul), color = tide)) +
+#   geom_point() +
+#   geom_smooth(method = "lm", se = F) +
+#   theme_bw() +
+#   labs(x = "Distance from pens (m)",
+#        y = "DNA copy number/uL (log10)") +
+#   theme(
+#     axis.title.x = element_text(margin = margin(t = 10)),
+#     axis.title.y = element_text(margin = margin(r = 10))
+#   )
+# 
+# # model 1: copy number and distance
+# mod1 <- lm(data = qpcr_w_meta, log10(quant_per_ul) ~ distance)
+# 
+# # model 2: distance and tide
+# mod2 <- lm(data = qpcr_w_meta, log10(quant_per_ul) ~ distance + tide)
+# 
+# # now compare the models with anova
+# anova(mod1, mod2)
+```
+
+The p-value is well below 0.05 (p = 2.2e-16), indicating that adding tide and distance significantly improves the model.
+
+
+```{r}
+# model fit
+#summary(mod2)
+
+```
+
+
+
+
+
+
+
+# 2022 samples
+
+first test plate - all samples diluted 1:10
+```{r}
+qpcr_inhibition_test(file = "../data/qpcr/2022/2023-11-03_Amalga2022_inhibition_test_plate1.xlsx")
+```
+
+
+second plate
+
+```{r}
+qpcr_inhibition_test("../data/qpcr/2022/2023-11-03_Amalga2022_inhibition_test_plate2.xlsx")
+
+```
+
+Very low amplification at all.
+
+third plate
+```{r}
+qpcr_inhibition_test("../data/qpcr/2022/2023-11-03_Amalga2022_inhibition_test_plate3.xlsx")
+qpcr_inhibition_test("../data/qpcr/2022/2023-11-07_Amalga2022_inhibition_test_plate4.xlsx")
+qpcr_inhibition_test("../data/qpcr/2022/2023-11-07_Amalga2022_inhibition_test_plate5.xlsx")
+qpcr_inhibition_test("../data/qpcr/2022/2023-11-07_Amalga2022_inhibition_test_plate6.xlsx")
+qpcr_inhibition_test("../data/qpcr/2022/2023-11-07_Amalga2022_inhibition_test_plate7.xlsx")
+qpcr_inhibition_test("../data/qpcr/2022/2023-11-07_Amalga2022_inhibition_test_plate8.xlsx")
+
+```
+
+
+```{r read-in-list-of-plates-for-2022}
+fp <- "../data/qpcr/2022/"
+
+fp %>%
+  list.files() %>%
+  .[str_detect(., ".xlsx")] -> xlsx_names
+
+# Load everything into the Global Environment
+xlsx_names %>%
+  purrr::map(function(file_name){ # iterate through each file name
+  
+  read_xlsx(paste0(fp, file_name), sheet = "Results", skip = 34)
+  
+}) -> df_list1 # Assign to a list
+
+plates2022 <- bind_rows(df_list1, .id = "plate")
+
+# multiple quantities by 10 because of 1:10 dilution factor
+# and 2 ul of diluted extract added to each well
+plates2022_10x <- plates2022 %>%
+  mutate(quant = (Quantity*10)/2)
+
+# list of samples
+list2022 <- plates2022_10x %>%
+  filter(Task =="UNKNOWN") %>%
+  dplyr::select(`Sample Name`) %>%
+  unique()
+
+list2022
+```
+Next steps: join metadata
+
+
+
+```{r}
+# read in 2022 metadata 
+meta2022 <- read_xlsx("../data/Amalga2022_cleanMetadata.xlsx")
+
+meta2022
+
+qpcr_meta2022_combined <- plates2022_10x %>%
+  left_join(., meta2022, by = c("Sample Name" = "Extraction ID")) %>%
+  filter(Task == "UNKNOWN" &
+          !is.na(distance_from_pens)) 
+
+qpcr_meta2022_combined %>%
+  filter(`Target Name` == "Oke_COI" &
+           transect == "perpendicular") %>%
+  ggplot(aes(x = distance_from_pens, y = log(quant))) +
+  geom_point(aes(color = time_of_day), alpha = 0.5) +
+  facet_grid(cols = vars(transect), rows = vars(depth), space = "free", labeller = label_both) +
+  theme_bw()
+
+
+list2022 %>%
+  left_join(., meta2022, by = c("Sample Name" = "Extraction ID")) %>%
+  filter(Sample_Date == "2022_05_05")
+  
+samples_meta22 <- list2022 %>%
+  left_join(., meta2022, by = c("Sample Name" = "Extraction ID")) #%>%
+  #filter(Sample_Date == "2022_05_05")
+```
+
+Double check that there are no spatial patterns evident in the samples that remained inhibited:
+```{r list-of-inhibited-samples-22}
+inhibited220 <- c("e01192", "e01256", "e01264", "e01271", "e01272", "e01312", "e01319", "e01320", "e01328", "e01335", "e01336", "e01342", "e01343", "e01366", "e01400", "e01416", "e01417", "e01438", "e01439", "e01464")
+
+# make that a dataframe
+inhibited_samples_22 <- as.data.frame(inhibited220) %>%
+  rename(`Sample Name` = inhibited220)
+
+# add metadata
+inhibited_df22 <- inhibited_samples_22 %>%
+  left_join(., samples_meta22) %>%
+  filter(Sample_Date == "2022_05_05")
+
+# look for spatial patterns in inhibited samples...
+inhibited_df22 %>%
+  ggplot(aes(x = distance_from_pens, y = -1*depth, color = time_of_day)) +
+  geom_jitter(width = 10, height = 2) +
+  facet_grid(rows = vars(transect))
+
+```
+**some of the inhibited samples are not from the 5/5/22 sampling date (but only 2).
+
+```{r inhibited-samples-in-stat-analysis}
+# zooming in on the samples at 0 m distance, 
+# were there sample replicates that did amplify/ were not inhibited?
+inhibited_df22 %>%
+  filter(distance_from_pens == 0)
+
+```
+
+
+
+
+So few data points for Oke_COI compared to the total number of samples analyzed.
+
+
+```{r}
+# previous qpcr data
+prev_qpcr <- read_xlsx("../data/2022_qPCR_results_combined.xlsx") 
+
+p_qpcr2 <- prev_qpcr %>%
+  filter(Task != "STANDARD") %>%
+  mutate(new_name = paste0("e0",`Sample Name`)) %>%
+  dplyr::select(new_name, CT, Quantity)
+
+
+tmp3 <- qpcr_meta2022_combined %>%
+  filter(`Target Name` == "Oke_COI") %>%
+  left_join(p_qpcr2, by = c("Sample Name" = "new_name")) %>%
+  dplyr::select(`Sample Name`, CT.x, CT.y, Quantity.x, Quantity.y) %>%
+  unique()
+
+tmp3$CT.x <- as.numeric(tmp3$CT.x)
+tmp3$CT.y <- as.numeric(tmp3$CT.y)
+
+
+tmp3 %>%
+  ggplot(aes(x = CT.x, y = CT.y)) +
+  geom_point() +
+  geom_abline(slope = 1, color = "blue") +
+  labs(x = "qPCR CT values w/ 1:10 dilution",
+       y = "qPCR CT values without dilution") +
+  scale_x_continuous(limits = c(25, 45)) +
+  scale_y_continuous(limits = c(25, 45)) +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+        axis.title.y = element_text(margin = margin(r = 10)),
+
+  )
+
+```
+Welp, that clearly shows that the diluted samples amplify at lower CT values when they deviate from the prior qPCR analysis. That's great. It means the inhibition dilutions are working as hoped and that the data otherwise appear just as they did previously.
+
+
+There are two samples that amplify later in the dilutions compared to the original qPCR.
+
+```{r}
+#qpcr_inhibition_test("../data/qpcr/2022/2023-11-03_Amalga2022_inhibition_test_plate1.xlsx")
+```
+
+There are hints of remaining inhibition for just a few samples. Good to look at replicates and determine whether there's something else I need to do.
+
+
+Can I look at the inhibition across all 2022 plates?
+
+
+```{r}
+# test for inhibition
+        data2022_plot <- qpcr_meta2022_combined %>%
+          filter(Task != "STANDARD") %>%
+          ggplot(aes(x = reorder(`Sample Name`, Well), y = `Ct Mean` , color = `Target Name`)) +
+          geom_point() +
+          theme_bw() +
+          theme(
+            axis.text.x = element_text(angle = 90)
+          ) +
+          #facet_grid(rows = vars(`Target Name`))  +
+          scale_y_continuous(breaks = seq(18,45, 1)) 
+        
+
+```
+
+
+```{r remaining-inhibition}
+qpcr_meta2022_combined %>%
+          filter(Task != "STANDARD") %>%
+  ggplot(aes(x = reorder(`Sample Name`, Well), y = `Ct Mean` , color = `Target Name`)) +
+          geom_point() +
+          theme_bw() +
+          theme(
+            axis.text.x = element_text(angle = 90)
+          ) +
+          #facet_grid(rows = vars(`Target Name`))  +
+          scale_y_continuous(limits = c(28,45)) 
+  
+
+
+qpcr_meta2022_combined %>%
+          filter(Task != "STANDARD" &
+                   `Ct Mean` > 29) %>%
+   ggplot(aes(x = reorder(`Sample Name`, Well), y = `Ct Mean` , color = `Target Name`)) +
+          geom_point() +
+          theme_bw() +
+          theme(
+            axis.text.x = element_text(angle = 90)
+          ) 
+```
+So that's as few as 8 samples.
+
+Summarize across samples based on metadata
+```{r}
+df_w_meta2022 <- qpcr_meta2022_combined %>%
+  filter(`Target Name` == "Oke_COI" &
+           Task == "UNKNOWN") %>%
+  dplyr::select(`Sample Name`, CT, Quantity, quant, `Sample Code`, transect, distance_from_pens, depth, time_of_day, Sample_Date) %>%
+  filter(Sample_Date == "2022_05_05")
+
+
+df_w_meta2022 %>%
+  filter(depth == "0" & 
+           transect == "perpendicular") %>%
+  ggplot(aes(x = distance_from_pens, y = log10(Quantity), color = time_of_day)) +
+  geom_point() +
+  facet_grid(rows = vars(time_of_day)) +
+  #facet_grid(cols = vars(transect), scales = "free") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90)
+          ) +
+  labs(title = "Amalga, 5 May 2022, surface samples")
+  
+#ggsave("pdf_outputs/amalga2022_perpendicularTransect.pdf", width = 7, height = 5)
+```
+Which tide was in the AM and which in the PM here? DNA quantity near the pens was >>> higher during the afternoon.
+
+```{r}
+df_w_meta2022 %>%
+  #filter(depth == "0") %>%
+  ggplot(aes(x = distance_from_pens, y = log10(Quantity), shape = time_of_day, color = time_of_day)) +
+  geom_point(size = 3, alpha = 0.6) +
+  facet_grid(rows = vars(depth), labeller = "label_both") +
+  #facet_grid(cols = vars(transect), scales = "free") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90)
+          ) +
+  labs(title = "Amalga, 5 May 2022") +
+  scale_shape_manual(values = c(16,18)) +
+  scale_color_manual(values = mycols)
+
+
+```
+
+
+```{r}
+df_w_meta2022 %>%
+  filter(transect != "perpendicular") %>%
+  ggplot(aes(x = distance_from_pens, y = log10(Quantity), shape = time_of_day, color = time_of_day)) +
+  geom_point(size = 3) +
+  facet_grid(rows = vars(depth), labeller = "label_both") +
+  #facet_grid(cols = vars(transect), scales = "free") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90)
+          ) +
+  labs(title = "Amalga, 5 May 2022") +
+  scale_shape_manual(values = c(1,2)) +
+  scale_color_manual(values = mycols)
+
+
+```
+
+To dos:
+1. Create a single joined dataframe with qPCR data from both 2022 and 2021
+2. Evaluating the quantities in relation to the LOD/LOQ
+3. Conclusions about detection distance, quantification distance, differences between years, depth, perpendicular vs. parallel transects
+
+
+
+Results
+
+number of samples (2021, 2022)
+
+
+qPCR
+number of detections above the LOD (within what distance?)
+number of samples with LOQ 
+number of inhibited samples (and locations - figure)
+no positive detections in the negative controls (maybe one??)
+no positive detections in the extraction blanks (if tested?)
+
+
+```{r combine-data-from-both-years}
+# 2021 data - including the inhibited samples rerun as dilutions
+df2021 <- combined_data %>%
+  filter(`Target Name` == "Oke_COI" &
+           Task == "UNKNOWN") %>%
+  dplyr::select(`Sample Name`, CT, quant_per_ul)
+  
+  
+# 2022 data
+df2022 <- plates2022_10x %>%
+  filter(`Target Name` == "Oke_COI" &
+           Task == "UNKNOWN") %>%
+  rename(quant_per_ul = quant) %>%
+  dplyr::select(`Sample Name`, CT, quant_per_ul)
+
+
+# combine those
+combo_df <- bind_rows(df2021, df2022) %>%
+  rename(sample = `Sample Name`)
+```
+
+
+```{r make-metadata-consistent-btwn-years}
+slim_m2021 <- clean_meta %>%
+  mutate(time_of_day = location) %>%
+  mutate(depth = 0) %>%
+  mutate(transect = "perpendicular") %>%
+  rename(distance_from_pens = distance) %>%
+  dplyr::select(-location, -type, -dist_grp) %>%
+  mutate(sample_date = "2021_05_10")
+
+slim_m2022 <- meta2022 %>%
+  rename(sample = `Extraction ID`, label = `Sample Code`, sample_date = Sample_Date) %>%
+  dplyr::select(sample, label, distance_from_pens, time_of_day, depth, transect, sample_date) %>%
+  mutate(tide = ifelse(time_of_day == "AM", "outgoing", "incoming")) 
+  
+
+
+metadata_both_years <- bind_rows(slim_m2021, slim_m2022) 
+```
+
+```{r combine-qpcr-data-and-metadata-for-both-years}
+merged_df_both_years <- combo_df %>%
+  left_join(., metadata_both_years) %>%
+  filter(sample_date %in% c("2021_05_10", "2022_05_05")) %>%
+  mutate(year = ifelse(sample_date == "2021_05_10", "2021", "2022")) %>%
+  filter(distance_from_pens != 100) %>%
+    mutate(log_dna_ul = log10(quant_per_ul))
+
+merged_df_both_years %>%
+  filter(year == "2022" & depth == 0)
+
+
+# start exploring that data
+merged_df_both_years %>%
+  filter(!is.na(distance_from_pens) &
+           transect == "perpendicular" &
+           depth == 0) %>%
+  ggplot(aes(x = distance_from_pens, y = log_dna_ul, shape = tide, color = tide)) +
+  geom_point(size = 3, alpha = 0.65) +
+  facet_grid(rows = vars(year)) +
+  theme_bw() +
+  scale_shape_manual(values = c(16, 18)) +
+  scale_color_manual(values = mycols) +
+  labs(x = "Distance from pens (m)",
+       y = "DNA copies/uL (log10)") +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+
+
+```
+Okay, that's kind of useful. Very little to talk about with the 2022 samples. There's one outlier for the incoming tide at 0m that I don't like - it would be nice to take a look at the replicates.
+
+
+```{r}
+merged_df_both_years %>%
+  filter(sample_date == "2022_05_05") %>%
+  mutate(detection = ifelse(CT == "Undetermined", "no", "yes")) %>%
+  group_by(detection) %>%
+  tally()
+
+```
+So many non-detections!
+
+```{r}
+merged_df_both_years %>%
+  filter(sample_date == "2021_05_10") %>%
+  mutate(detection = ifelse(CT == "Undetermined", "no", "yes")) %>%
+  group_by(detection) %>%
+  tally()
+
+```
+Much more equal, with slightly more detections.
+
+I think I'll basically tell a story with the 2021 data and then use the 2022 data to back up statements about depth distribution.
+
+```{r summary}
+merged_df_both_years %>%
+  filter(label != "blank" | label == "background") %>%
+  mutate(distance_from_pens = ifelse(str_detect(transect, "_B"), -distance_from_pens, distance_from_pens)) %>%
+  mutate(x_dist = ifelse(transect == "perpendicular", distance_from_pens, NA)) %>%
+  mutate(y_dist = ifelse(str_detect(transect,"parallel"), distance_from_pens, NA)) %>%
+  mutate(y_dist = ifelse(is.na(y_dist), 0, y_dist)) %>%
+  mutate(x_dist = ifelse(is.na(x_dist), 1000, x_dist)) %>%
+  group_by(year, tide, depth) %>%
+  tally()
+
+
+```
+```{r}
+merged_df_both_years %>%
+  filter(label != "blank" & !str_detect(label, "background")) %>%
+  mutate(distance_from_pens = ifelse(str_detect(transect, "_B"), -distance_from_pens, distance_from_pens)) %>%
+  mutate(x_dist = ifelse(transect == "perpendicular", distance_from_pens, NA)) %>%
+  mutate(y_dist = ifelse(str_detect(transect,"parallel"), distance_from_pens, NA)) %>%
+  mutate(y_dist = ifelse(is.na(y_dist), 0, y_dist)) %>%
+  mutate(x_dist = ifelse(is.na(x_dist), 1000, x_dist)) %>%
+  group_by(year, tide, depth) %>%
+  tally()
+```
+
+## Stats for distance & tide
+
+Are data normally distributed?
+
+```{r}
+for_mod2021 <- merged_df_both_years %>%
+  filter(sample_date == "2021_05_10" &
+           distance_from_pens != 100) %>% # bec this is between the creek and the pens
+
+
+
+library(ggpubr)
+ggdensity(for_mod2021$log_dna_ul)
+ggqqplot(for_mod2021$log_dna_ul)
+
+
+```
+Those visual inspection methods make the data appear normally distributed, but it's good to test this explicitly.
+```{r test-for-normality}
+shapiro.test(for_mod2021$log_dna_ul)
+
+```
+Based on this, the data are not significantly different from normal.
+
+
+
+```{r linear-regression-models}
+# model 1: copy number and distance
+mod1 <- lm(data = for_mod2021, log_dna_ul ~ distance_from_pens)
+
+# model 2: distance and tide
+mod2 <- lm(data = for_mod2021, log_dna_ul ~ distance_from_pens + tide)
+
+# now compare the models with anova
+anova(mod1, mod2)
+
+summary(mod2)
+```
+
+
+```{r detections-over-distance}
+merged_df_both_years %>%
+ filter(!is.na(distance_from_pens) &
+           year == 2021 &
+          distance_from_pens != 100) %>%
+  group_by(tide, distance_from_pens) %>%
+  mutate(detection = ifelse(is.na(quant_per_ul), 0, 1)) %>%
+  summarise(n_detections = sum(detection)/9) %>%
+  ggplot(aes(x = distance_from_pens, y = n_detections, fill = tide)) +
+  geom_bar(stat = "identity") +
+  facet_grid(rows = vars(tide), labeller = label_both) +
+  theme_bw() +
+  scale_shape_manual(values = c(1,2)) +
+  scale_fill_manual(values = mycols) +
+  labs(x = "Distance from pens (m)",
+       y = "Proportion of eDNA detections") +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10)),
+    legend.position = "none"
+  ) 
+
+ggsave("pdf_outputs/eDNA_detections2021.png", width = 6, height = 4)
+```
+
+
+```{r}
+# max detection distance:
+merged_df_both_years %>%
+  filter(!is.na(distance_from_pens) &
+           transect == "perpendicular" &
+           depth == 0 &
+           sample_date == "2021_05_10" &
+           CT != "Undetermined",
+         distance_from_pens > 1800) 
+  
+```
+1920m maximum detection distance from 2021
+
+
+both of the farthest detections are technically below the LOD.
+
+```{r}
+merged_df_both_years %>%
+  filter(!is.na(distance_from_pens) &
+           transect == "perpendicular" &
+           depth == 0 &
+           sample_date == "2021_05_10" &
+           CT != "Undetermined" &
+           quant_per_ul > 50) %>%
+  group_by(sample, distance_from_pens) %>%
+  summarise(mean_copies = mean(quant_per_ul)) %>%
+  arrange(distance_from_pens)
+```
+
+
+How many samples above the LOD/LOQ?
+```{r samples-above-LOD}
+merged_df_both_years %>%
+  #filter(distance_from_pens < 1001) %>%
+  group_by(year) %>%
+  filter(quant_per_ul > 25) %>% # a LOD of 10 copies/rxn = 5 copies/ 2 ul rxn
+  tally()
+
+```
+
+```{r}
+merged_df_both_years %>%
+   filter(quant_per_ul < 5)  %>%
+  group_by(distance_from_pens, year) %>%
+  tally()
+
+```
+
+```{r cumulative-eDNA-over-distance}
+merged_df_both_years %>%
+  filter(year == 2021 & 
+           !is.na(tide) &
+           distance_from_pens != 100 &
+           !is.na(quant_per_ul)) %>%
+  group_by(sample) %>%
+  arrange(distance_from_pens) %>%
+  mutate(mean_eDNA = mean(quant_per_ul)) %>%
+  dplyr::select(distance_from_pens, tide, mean_eDNA) %>%
+  unique() %>%
+  ungroup() %>%
+  group_by(tide) %>%
+  mutate(cum_dna = sum(mean_eDNA)) %>%
+  mutate(prop_dna = mean_eDNA/cum_dna) # HERE NEED TO ADD SOMETHING TO MAKE THE DNA ADDITIVE OVER DISTANCE
+  group_by(distance_from_pens, tide) %>%
+  mutate(mean_dist = mean(mean_eDNA)) %>%
+  dplyr::select(-sample, -mean_eDNA) %>%
+  unique() %>%
+  ggplot(aes(x = distance_from_pens, y = prop_dna, color = tide)) +
+  geom_point()
+
+```
+
+
+
+Did I qPCR any of the extraction blanks?
+```{r}
+df_for_3d <- merged_df_both_years %>%
+  filter(year == "2022") %>%
+  mutate(distance_from_pens = ifelse(str_detect(transect, "_B"), -distance_from_pens, distance_from_pens)) %>%
+  mutate(x_dist = ifelse(transect == "perpendicular", distance_from_pens, NA)) %>%
+  mutate(y_dist = ifelse(str_detect(transect,"parallel"), distance_from_pens, NA)) %>%
+  mutate(y_dist = ifelse(is.na(y_dist), 0, y_dist)) %>%
+  mutate(x_dist = ifelse(is.na(x_dist), 1000, x_dist)) %>%
+  mutate(log_quant = log10(quant_per_ul)) %>%
+  mutate(depth = ifelse(depth != 0, -1*depth, depth))
+
+```
+
+
+
+## Making 3D figure
+```{r}
+# library(plotly)
+# 
+# p3d <-plot_ly(data = df_for_3d, x = ~x_dist, y = ~y_dist, z = ~depth, type = "scatter3d", mode = "markers", size = ~log_quant, color = ~tide, colors = c("dodgerblue", "darkmagenta")) 
+# 
+# p3d %>%
+#   layout(scene = list(xaxis = list(title = 'Perpendicular transect'),
+#                      yaxis = list(title = 'Parallel transect'),
+#                      zaxis = list(title = 'Depth')))
+
+```
+
+The 3D plot is actually pretty hard to interpret. Let's pivot to displaying the depth for the parallel and perpendicular transects in two plots.
+
+
+```{r plots-for-depth-figure}
+# I want to explicitly plot NAs on here to show where we sampled but didn't have data
+
+df_for_3d %>%
+  mutate(depth = -1*depth) %>%
+  filter(!is.na(depth)) %>%
+  ggplot(aes(x = x_dist, y = y_dist, size = log_quant, color = tide, shape = tide)) +
+  geom_jitter(alpha = 0.5, width = 100, height = 100) +
+  theme_bw() +
+  facet_grid(rows = vars(depth), labeller = label_both) +
+  labs(x = "Perpendicular transect (meters from pens)",
+       y = "Parallel transect (SE-NW, meters from 1000 m midpoint)",
+       color = "Tide",
+       shape = "Tide",
+       size = "DNA copies/uL\n(log10)") +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_shape_manual(values = c(16, 18), na.value = 1) +
+  scale_color_manual(values = mycols) +
+  guides(color = guide_legend(override.aes = list(size = 5)))
+
+ggsave("pdf_outputs/depth_transects2022.png", width = 6, height = 7)
+
+```
+
+```{r explicitly-plot-NAs}
+# I want to explicitly plot NAs on here to show where we sampled but didn't have data
+tmp <- df_for_3d %>%
+  mutate(depth = -1*depth) %>%
+  filter(!is.na(depth))
+
+
+### try a simple version
+tmp %>%
+  ggplot() +
+  geom_jitter(aes(x = x_dist, y = y_dist, color = log_quant), size = 1.5, alpha = 0.9, width = 100, height = 70) +
+  geom_point(data = tmp[is.na(tmp$log_quant),], aes(x_dist, y_dist), color = "gray", shape = 1, size = 3) +
+  theme_bw() +
+  facet_grid(rows = vars(depth), cols = vars(tide), labeller = label_both) +
+  scale_color_gradient(na.value = NA) +
+  #scale_shape_manual(na.value = 2) +
+  labs(x = "Perpendicular transect (meters from pens)",
+       y = "Parallel transect (SE-NW, meters from 1000 m midpoint)",
+       color = "DNA copies/uL\n(log10)") +
+   theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+
+ggsave("pdf_outputs/depth_transects2022_v2.png", width = 6, height = 4)
+```
+
+
+Relationship between qPCR detections and depth
+```{r}
+df_for_3d %>%
+  mutate(depth = -1*depth) %>%
+  filter(!is.na(depth) &
+           transect == "perpendicular") %>%
+  ggplot(aes(x = depth, y = log_quant, color = log_quant)) +
+  geom_point() +
+  facet_grid(rows = vars(tide), cols = vars(transect)) +
+  scale_x_continuous(breaks = c(0, 5, 10)) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+    scale_color_gradient(na.value = "gray") +
+  guides(color = guide_legend(override.aes = list(size = 5))) +
+   labs(x = "Depth (m)",
+       y = "DNA copies/uL\n(log10)",
+       color = "Tide",
+       shape = "Tide",
+       size = "DNA copies/uL\n(log10)")
+
+```
+Is it worth fitting a linear model to this?
+
+```{r perpendicular-depths}
+df_for_3d %>%
+  #mutate(depth = -1*depth) %>%
+  filter(!is.na(depth) &
+           transect == "perpendicular") %>%
+  ggplot(aes(x = x_dist, y = depth, size = log_quant, color = tide, shape = tide)) +
+  geom_jitter(alpha = 0.5, width = 70, height = 0.5) +
+  facet_grid(rows = vars(tide), cols = vars(transect)) +
+  #geom_smooth(method = "lm", se = F) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_shape_manual(values = c(16, 18)) +
+  scale_color_manual(values = mycols) +
+  scale_y_continuous(breaks = c(0, -5, -10)) +
+   guides(color = guide_legend(override.aes = list(size = 5))) +
+   labs(y = "Depth (m)",
+       x = "Distance from pens (m)",
+       color = "Tide",
+       shape = "Tide",
+       size = "DNA copies/uL\n(log10)")
+
+ggsave("pdf_outputs/depth_by_distance.png", width = 6, height = 5)
+```
+
+
+
+```{r parallel-depths}
+df_for_3d %>%
+  #mutate(depth = -1*depth) %>%
+  mutate(transect = ifelse(distance_from_pens == 1000 & transect == "perpendicular", "parallel", transect)) %>%
+  mutate(y_dist = ifelse(distance_from_pens == 1000 & transect == "parallel", 0, y_dist)) %>%
+  filter(!is.na(depth) &
+           str_detect(transect, "parallel")) %>%
+  ggplot(aes(x = y_dist, y = depth, size = log_quant, color = tide, shape = tide)) +
+  geom_jitter(alpha = 0.5, width = 25, height = 0.3) +
+  #facet_grid(rows = vars(tide), cols = vars(transect)) +
+  #geom_smooth(method = "lm", se = F) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_shape_manual(values = c(16, 18)) +
+  scale_color_manual(values = mycols) +
+  scale_y_continuous(breaks = c(0, -5, -10)) +
+   guides(color = guide_legend(override.aes = list(size = 5))) +
+   labs(y = "Depth (m)",
+       x = "Distance from pens (m)",
+       color = "Tide",
+       shape = "Tide",
+       size = "DNA copies/uL\n(log10)")
+
+ggsave("pdf_outputs/depth_by_distance_parallel.png", width = 6, height = 5)
+
+
+```
+% of detections in surface samples vs. at depth?
+
+```{r}
+merged_df_both_years %>%
+  filter(!is.na(quant_per_ul) & quant_per_ul > 5 & year == "2022") %>%
+  group_by(depth) %>%
+  tally()
+
+```
+```{r}
+6/52
+```
+
+
+### Depth Stats - ANOVAs
+
+1. Test whether there is statistically more DNA at the surface compared to the 5m and 10m depths
+2. and then test whether incoming/outgoing tide makes a difference
+
+```{r}
+for_anova <- merged_df_both_years %>%
+  filter(year == 2022 &
+           !is.na(depth) &
+           !is.na(quant_per_ul) &
+           distance_from_pens == 0) %>%
+  group_by(depth, tide) 
+
+for_anova %>%
+  summarise(sd = sd(log_dna_ul))
+  
+```
+171 samples per depth from 2022, but the number of detections per depth is much smaller.
+
+multiple comparisons:
+every depth x tide compared to every other depth x tide
+
+```{r nested-anova-depth-tide}
+# set-up df
+for_anova$depth <- as.factor(for_anova$depth)
+for_anova$tide <- as.factor(for_anova$tide)
+
+# form
+# aov(response ~ factor A/ factor B)
+
+depth.tide <- aov(for_anova$log_dna_ul ~ for_anova$tide / for_anova$depth, data = for_anova)
+summary(depth.tide)
+
+tukey.depth.tide <- TukeyHSD(depth.tide, conf.level = 0.95)
+as.data.frame(tukey.depth.tide$`for_anova$tide:for_anova$depth`) %>%
+  arrange(`p adj`) %>%
+  filter(`p adj` < 0.05)
+```
+
+
+```{r tukey-depth-wo-tide}
+# anova with depth different form
+model.dt <- aov(data = for_anova, for_anova$log_dna_ul ~ for_anova$depth)
+
+summary(model.dt)
+# significance of depth (without tide)
+TukeyHSD(model.dt, conf.level = 0.95)
+
+```
+
+
+```{r}
+ggplot(for_anova, aes(x=factor(depth), y=log_dna_ul, fill=tide)) +
+  geom_boxplot() +
+  theme_minimal() +
+  scale_fill_manual(values = c("coral3", "cadetblue4"))
+
+```
+
+```{r Tukey-test}
+library(multcompView)
+
+tukey <- TukeyHSD(x = depth.tide, 'for_anova$depth', conf.level = 0.95)
+
+```
+
+
+
+All depth data:
+```{r}
+alldepth <- merged_df_both_years %>%
+  filter(year == 2022 &
+           !is.na(depth) &
+           !is.na(quant_per_ul)) %>%
+  group_by(depth, tide) 
+
+depth.tide.all <- aov(alldepth$quant_per_ul ~ alldepth$tide / factor(alldepth$depth))
+
+summary(depth.tide.all)
+
+```
+
+
+Testing for differences at the surface across "stations"
+```{r}
+station.df <- merged_df_both_years %>%
+  filter(year == 2022 &
+           !is.na(depth) &
+           depth == 0 &
+           !is.na(quant_per_ul) &
+           distance_from_pens %in% c(500, 1000)) %>%
+  mutate(station = ifelse(transect == "perpendicular" & distance_from_pens == 500, "A", NA)) %>%
+  mutate(station = ifelse(transect == "perpendicular" & distance_from_pens == 1000, "B", station)) %>%
+  mutate(station = ifelse(transect == "parallel_T2", "C", station)) %>%
+  mutate(station = ifelse(transect == "parallel_T3", "D", station)) %>%
+  mutate(station = ifelse(transect == "parallel_B2", "E", station)) %>%
+  mutate(station = ifelse(transect == "parallel_B3", "F", station))
+  
+
+station.aov <- aov(station.df$quant_per_ul ~ station.df$tide / factor(station.df$station))
+
+summary(station.aov)
+
+```
+only two observations on outgoing tide.
+
+```{r}
+station.df <- merged_df_both_years %>%
+  filter(year == 2022 &
+           !is.na(depth) &
+           depth == 0 &
+           !is.na(quant_per_ul) &
+           distance_from_pens %in% c(500, 1000) &
+           tide == "incoming") %>%
+  mutate(station = ifelse(transect == "perpendicular" & distance_from_pens == 500, "A", NA)) %>%
+  mutate(station = ifelse(transect == "perpendicular" & distance_from_pens == 1000, "B", station)) %>%
+  mutate(station = ifelse(transect == "parallel_T2", "C", station)) %>%
+  mutate(station = ifelse(transect == "parallel_T3", "D", station)) %>%
+  mutate(station = ifelse(transect == "parallel_B2", "E", station)) %>%
+  mutate(station = ifelse(transect == "parallel_B3", "F", station))
+  
+
+station.aov <- aov(station.df$quant_per_ul ~ factor(station.df$station))
+
+summary(station.aov)
+
+
+```
+
+station isn't significant there either.
+
+
+
+
+
+
+
+### Working on LOD 
+The actual code for the calcs is in another Rmd.
+
+```{r}
+# output test standards file for LoD calculator
+# std_for_lod <- stds_combo %>%
+#   dplyr::select(`Well Position`, Reporter, `Sample Name`, CT, Quantity, `Target Name`) %>%
+#   rename(Well = `Well Position`, Fluor = Reporter, Sample = `Sample Name`, Cq = CT, SQ = Quantity, Target = `Target Name`) 
+
+# standards for the 2022 data
+std2022_plates <- plates2022_10x %>%
+  filter(Task == "STANDARD" &
+           `Target Name` == "Oke_COI") %>%
+  dplyr::select(`Well Position`, Reporter, `Sample Name`, CT, Quantity, `Target Name`) %>%
+  rename(Well = `Well Position`, Fluor = Reporter, Sample = `Sample Name`, Cq = CT, SQ = Quantity, Target = `Target Name`) 
+
+# fix the char/numeric
+std2022_plates$Cq <- as.numeric(std2022_plates$Cq)
+  
+# combine 2022 and 2021 plates standards
+#std_combined <- bind_rows(std_for_lod, std2022_plates)
+
+```
+
