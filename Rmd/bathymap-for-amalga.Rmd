@@ -5,72 +5,6 @@ output: html_notebook
 
 24 Feb 2022
 
-```{r load-packages}
-# library(tidyverse)
-# library(ncdf4)
-# library(raster)
-```
-
-```{r load-data}
-# Let's see if this DEM from NOAA is useful
-# juneau <- raster("JuneauBathy.tif")
-
-# plot(juneau)
-```
-Filter out the land values by setting >=0
-
-leaning on this: https://www.benjaminbell.co.uk/2019/08/bathymetric-maps-in-r-colour-palettes.html
-
-To figure out a color scheme, need min and max
-```{r}
-# Calculate min and max values
-# mi <- cellStats(juneau, stat="min")-100
-# ma <- cellStats(juneau, stat="max")+100
-```
-
-```{r}
-    # # Break points sequence for below sea level
-    # s1 <- seq(from=mi, to=0, by=0 - mi / 50)
-    # # Break points sequence for above sea level
-    # s2 <- seq(from=0, to=ma, by=ma / 50)
-    # 
-    #     # Round sequence to nearest 100
-    # s1 <- round(s1, -1)
-    # s2 <- round(s2, -1)
-    # 
-    #     # Only show unique numbers
-    # s1 <- unique(s1)
-    # s2 <- unique(s2)
-    # 
-    # s1
-    # 
-    # s2
-```
-```{r}
-    # Combine sequences and remove the first value from second sequence
-    # s3 <- c(s1, s2[-1])
-```
-
-
-```{r}
-    # Plot
-    # plot(juneau, col=c(blue.col(50), terrain.colors(50)), breaks=s3)
-```
-
-```{r}
-# crop <- extent(-134.8,-134.6,58.45,58.5)
-# 
-# extent(juneau)
-# 
-# june.zoom <- setExtent(juneau, crop)
-# 
-# plot(june.zoom, col=c(blue.col(50), terrain.colors(50)), breaks=s3)
-```
-
-
-
-
-
 ## in ggplot
 
 https://stackoverflow.com/questions/33227182/how-to-set-use-ggplot2-to-map-a-raster
@@ -90,138 +24,46 @@ library(ggnewscale)
 library(rnaturalearthdata)
 library(rnaturalearth)
 library(ggspatial)
+library(ggOceanMaps)
 
 ```
 
 ```{r}
 datafold <- "../data/JuneauBathy.tif"
 test <- raster(datafold) 
+
+# need to assign a CRS to the raster
+# +proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0
+# is the CRS from the world map used for AK/GOA
+
+crs(test) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
 ```
 
 
 ```{r}
 test_spdf <- as(test, "SpatialPixelsDataFrame")
 test_df <- as.data.frame(test_spdf)
-colnames(test_df) <- c("value", "x", "y")
+colnames(test_df) <- c("depth", "x", "y")
 
 zoom.df <- test_df %>%
   filter(x > -134.95, x < -134.76, y > 58.4, y < 58.55)
   #filter(x > -135, x < -134, y > 58.2, y < 58.7) 
 
 zoom.df.w.gray <- zoom.df %>%
-  mutate(value = ifelse(value >=0, NA, value)) # set land to NA to shade it gray
+  mutate(depth = ifelse(depth >=0, NA, depth)) # set land to NA to shade it gray
 
 # fully zoomed out
 full_size_raster <- test_df %>%
-  mutate(value = ifelse(value >=0, NA, value)) # set land to NA to shade it gray
-```
-
-```{r}
-# minimum value below sea level
-mi <- min(zoom.df$value)
-
-# Break points sequence for below sea level
-s1 <- seq(from=mi, to=0, by=0 - mi / 50)
-
-depth.scale <- round(s1, 0)
-depth.scale <- unique(depth.scale)
-
-depth.scale
-breaks = levels(depth.scale)[floor(seq(1, nlevels(depth.scale), length.out = 10))]
-
-new.depth.scale <- depth.scale[seq(1, length(depth.scale), 3)]
+  mutate(depth = ifelse(depth >=0, NA, depth)) # set land to NA to shade it gray
 ```
 
 
-```{r bathy-map-amalga}
-zoomed.out <- ggplot() +  
-  geom_tile(data=zoom.df.w.gray, aes(x=x, y=y, fill=value), alpha=0.8) + 
-  scale_fill_steps2(low = "navyblue",
-                    mid = "dodgerblue4",
-  high = "lightsteelblue1",
-  midpoint = -155,
-  na.value = "grey50",
-  breaks = new.depth.scale) +
-  coord_equal() +
-  theme(panel.border = element_blank(),
-        panel.background = element_blank(),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.text = element_text(size = 12),
-        axis.title.x = element_text(size = 14, margin = margin(t=10)),
-        axis.title.y = element_text(size = 14, margin = margin(r=10)),
-        axis.line = element_line(color = "black"),
-        legend.position="right") +
-      theme(legend.text = element_text(size = 8)) + 
-      theme(legend.key.height=unit(1.8, "cm")) +
-      labs(fill = "Depth (m)",
-         x = "Longitude (W)",
-         y = "Latitude (N)")
-
-zoomed.out
-
-#ggsave("pdf_outputs/amalgaBathy.pdf")
-```
-
-
-
-That's more zoomed out, but gives a better perspective...
-
-
-Then here's more zoomed in on Amalga:
-
-
-```{r}
-more.zoom.df <- test_df %>%
-  filter(x > -134.85, x < -134.77, y > 58.43, y < 58.51) %>%
-  mutate(value = ifelse(value >=0, NA, value)) # set land to NA to shade it gray
-
-zoomed.map <- ggplot() +  
-  geom_tile(data=more.zoom.df, aes(x=x, y=y, fill=value), alpha=0.8) + 
-  scale_fill_steps2(low = "navyblue",
-                    mid = "dodgerblue4",
-  high = "lightsteelblue1",
-  midpoint = -97,
-  #space = "Lab",
-  na.value = "grey50",
-  breaks = new.depth.scale) +
-  coord_equal() +
-  coord_equal() +
-  theme(panel.border = element_blank(),
-        panel.background = element_blank(),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.text = element_text(size = 12),
-        axis.title.x = element_text(size = 14, margin = margin(t=10)),
-        axis.title.y = element_text(size = 14, margin = margin(r=10)),
-        axis.line = element_line(color = "black"),
-        legend.position="right") +
-      theme(legend.text = element_text(size = 8)) + 
-      theme(legend.key.height=unit(1.8, "cm")) +
-      labs(fill = "Depth (m)",
-         x = "Longitude (W)",
-         y = "Latitude (N)")
-
-zoomed.map
-
-#ggsave("amalgaBathyZoom.pdf")
-```
-
-Add the transect line to this map?
-
-
-
-
-```{r}
+```{r add-transect-line}
 # read in the data
 # this dataframe is produced in the CTD analysis on the VM
 # 08-ctd-cast-data.Rmd
 ctd <- read_csv("../data/ctdDataframe.csv")
 
-```
-
-
-```{r}
 # just one of the transects (not both AM and PM)
 am <- ctd %>%
   filter(tide == "AM_incoming") %>%
@@ -234,36 +76,50 @@ am %>%
   geom_text()
 ```
 
-```{r}
-zoomed.map +
-  geom_point(data = am, aes(x = long, y = lat, label = id), size = 1, color = "firebrick2")
 
-#ggsave("pdf_outputs/amalgaTransectBathy.pdf", height = 6, width = 7)
+```{r zoom-for-mapping-amalga}
+# filter the raster dataframe to zoom in on Amalga
+highest.res <- test_df %>%
+  filter(x > -134.83, x < -134.779, y > 58.47, y < 58.51) %>%
+  mutate(depth = ifelse(depth >=0, NA, depth))  %>% # set land to NA to shade it gray
+  mutate(depth = -1*depth) # flip the sign on depth values
+
+highest.res
+```
+```{r}
+# maximum value below sea level
+tmp1 <- highest.res %>%
+  filter(!is.na(depth))
+ max.depth <- max(tmp1$depth)
+
+# Break points sequence for below sea level
+s1 <- seq(from=0, to=max.depth, by= max.depth / 15)
+
+depth.scale <- round(s1, 0)
+depth.scale <- unique(depth.scale)
+
+depth.scale
+breaks = levels(depth.scale)[floor(seq(1, nlevels(depth.scale), length.out = 10))]
+
+new.depth.scale <- depth.scale[seq(1, length(depth.scale), 3)]
 ```
 
-
-Zoom more
-
-```{r zoom-plot-for-mapping-figures}
-highest.res <- more.zoom.df %>%
-  filter(x > -134.83, x < -134.779, y > 58.47, y < 58.51) %>%
-  mutate(value = ifelse(value >=0, NA, value)) # set land to NA to shade it gray
-
+```{r zoom-plot}
 highest.zoom.plot <- ggplot() +  
-  geom_tile(data=highest.res, aes(x=x, y=y, fill = value, color = value)) + 
-  scale_fill_steps2(low = "navyblue",
+  geom_tile(data=highest.res, aes(x=x, y=y, fill = depth, color = depth)) + 
+  scale_fill_steps2(high = "navyblue",
                     mid = "dodgerblue4",
-  high = "lightsteelblue1",
-  midpoint = -99,
+  low = "lightsteelblue1",
+  midpoint = 90,
   space = "Lab",
   na.value = "grey50",
-  breaks = new.depth.scale) +
-  scale_color_steps2(low = "navyblue",
+  breaks = depth.scale) +
+  scale_color_steps2(high = "navyblue",
                     mid = "dodgerblue4",
-  high = "lightsteelblue1",
-  midpoint = -99,
+  low = "lightsteelblue1",
+  midpoint = 90,
   na.value = "grey50",
-  breaks = new.depth.scale) +
+  breaks = depth.scale) +
   coord_equal() +
   theme(panel.border = element_blank(),
         panel.background = element_blank(),
@@ -277,11 +133,11 @@ highest.zoom.plot <- ggplot() +
        theme(legend.text = element_text(size = 6)) + 
       # theme(legend.key.height=unit(1, "cm")) +
       labs(fill = "Depth (m)",
-         x = "Longitude (W)",
-         y = "Latitude (N)") +
+         x = " ",
+         y = " ") +
   guides(color = F) +
-  scale_y_continuous(expand = c(0,0), breaks = c(58.48, 58.49, 58.50)) +
-  scale_x_continuous(expand = c(0,0))
+  scale_y_continuous(expand = c(0,0), breaks = c(58.48, 58.49, 58.50), labels = c("58.48°N", "58.49°N", "58.50°N")) +
+  scale_x_continuous(expand = c(0,0), breaks = c(-134.82, -134.80, -134.78), labels = c("134.82°W", "134.80°W", "134.78°W")) # add labels for W and N
   
 
 highest.zoom.plot
@@ -298,38 +154,18 @@ transect2021 <- highest.zoom.plot +
       annotate(geom = "label", x = -134.825, y = 58.485, label = "2000m", size = 3, color = "black") +
   scale_x_continuous(limits = c(-134.83, -134.78), breaks = c(-134.82, -134.80, -134.78)) +
     scale_y_continuous(limits = c(58.47, 58.51)) 
-  #labs(title = "2021 transect") +
-  #scale_fill_continuous(breaks = c(0, -10, -25, -50, -75, -100, -125, -150, -200))
-  
-  
-#ggsave("pdf_outputs/amalgaTransectBathyZoom.pdf", width = 6, height = 5)
 
 ```
 at 560 m, it's basically the edge of Amalga Harbor.
 
 
-Add the transect to the zoomed out map:
-```{r}
-map2021_out <- zoomed.out +
-  geom_point(data = am, aes(x = long, y = lat), size = 1, color = "black") +
-  annotate(geom = "text", x = -134.786, y = 58.51, label = "Amalga Harbor", size = 4, color = "white", fontface = "bold") +
-  annotate(geom = "label", x = -134.83, y = 58.494, label = "2021 transect", size = 3, fontface = "bold")
-  
-
-```
-
-With these maps, I should be able to combine the two transect years with cowplot or similar.
-
-
 For the 2022 data, I need the equivalent from the CTD casts for the transect.
 
-CTD data from 2022
+#### CTD data from 2022
 
 
 ```{r read-in-data-from-2022}
 ctd.2022 <- read_csv("../data/2022ctdDataframe.csv")
-
-ctd.2022
 
 # grab the data for May 5 and one tide for data points for the map
 one.set.2022 <- ctd.2022 %>%
@@ -344,85 +180,9 @@ fp <- am %>%
   mutate(Year = "2021") %>%
   bind_rows(one.set.2022)
 
-
-amalga_plot <- highest.zoom.plot +
-  new_scale_color() +
-  geom_point(data = fp, aes(x = long, y = lat, shape = Year, color = Year), size = 1.5) +
-  annotate(geom = "label", x = -134.789, y = 58.496, label = "pens", size = 3, color = "black") +
-    annotate(geom = "label", x = -134.808, y = 58.4865, label = "1000m", size = 3, color = "black") +
-      annotate(geom = "label", x = -134.826, y = 58.485, label = "2000m", size = 3, color = "black") +
-  scale_color_manual(values = c("coral3", "gold")) +
-  scale_shape_manual(values = c(16,17)) +
-  theme(
-    legend.position = "bottom",
-    legend.spacing.x = unit(0, "cm"),
-    legend.key = element_rect(fill = "white"),
-    legend.spacing = unit(3, "cm")
-  ) +
-  guides(fill = guide_legend(label.position = "bottom",
-                             nrow = 1,
-                             keywidth = unit(0.5, "cm"),
-                             title.hjust = unit(0.2, "cm"),
-                             title.vjust = unit(0.4, "cm")),
-         color = guide_legend(override.aes = list(size = 5)))
-                             
-
-amalga_plot
-
-ggsave("pdf_outputs/amalgaTransectBathyZoom.png", width = 6, height = 5)
-
 ```
 
-```{r}
-
-# z.o <- zoomed.out +
-#   geom_point(data = one.set.2022, aes(x = long, y = lat), size = 1, color = "white") +
-#   annotate(geom = "label", x = -134.8, y = 58.51, label = "Amalga Harbor", size = 4, color = "black") +
-#   annotate(geom = "label", x = -134.86, y = 58.48, label = "background", size = 3, color = "black") +
-#     annotate(geom = "label", x = -134.80, y = 58.47, label = "transects", size = 3, color = "black") +
-#   theme(
-#      legend.position = "none"
-#   )
-# 
-#   
-# z.i.22 <- highest.zoom.plot +
-#   geom_point(data = one.set.2022, aes(x = long, y = lat), size = 1, color = "red") +
-#   annotate(geom = "label", x = -134.78999, y = 58.496, label = "pens", size = 3, color = "black") +
-#     annotate(geom = "label", x = -134.808, y = 58.492, label = "1000m", size = 3, color = "black") +
-#       annotate(geom = "label", x = -134.825, y = 58.485, label = "2000m", size = 3, color = "black") +
-#   scale_x_continuous(limits = c(-134.83, -134.78), breaks = c(-134.82, -134.80, -134.78)) +
-#     scale_y_continuous(limits = c(58.47, 58.51)) +
-#   theme(
-#   #   legend.position = "none",
-#   #   axis.text.x = element_blank(),
-#   #   axis.title.x = element_blank(),
-#   #   axis.ticks.x = element_blank(),
-#     axis.title.y = element_blank()  
-#     )
-# 
-# z.i.21 <- highest.zoom.plot +
-#   geom_point(data = am, aes(x = long, y = lat), size = 1, color = "red") +
-#   annotate(geom = "label", x = -134.78999, y = 58.496, label = "pens", size = 3, color = "black") +
-#     annotate(geom = "label", x = -134.808, y = 58.492, label = "1000m", size = 3, color = "black") +
-#       annotate(geom = "label", x = -134.825, y = 58.485, label = "2000m", size = 3, color = "black") +
-#   scale_x_continuous(limits = c(-134.83, -134.78), breaks = c(-134.82, -134.80, -134.78)) +
-#     scale_y_continuous(limits = c(58.47, 58.51)) +
-#    theme(
-#     #legend.position = "none",
-#     axis.text.x = element_blank(),
-#     axis.title.x = element_blank(),
-#     axis.ticks.x = element_blank(),
-#     axis.title.y = element_blank()
-#   )
-
-```
-
-
-
-```{r}
-library(ggOceanMaps)
-```
-```{r}
+```{r intermed-bathy-map-for-panel}
 # juneau <- data.frame(lon = -134.5162,
 #                      lat = 58.33718)
 #                      
@@ -442,9 +202,11 @@ amalga_plot2 <- highest.zoom.plot +
   #scale_x_continuous(limits = c(-134.825, -134.785)) +
   new_scale_color() +
   geom_point(data = fp, aes(x = long, y = lat, shape = Year, color = Year), size = 1.5) +
-  annotate(geom = "label", x = -134.789, y = 58.496, label = "pens", size = 3, color = "black") +
+  annotate(geom = "label", x = -134.78999, y = 58.496, label = "pens", size = 3, color = "black") +
     annotate(geom = "label", x = -134.808, y = 58.4865, label = "1000m", size = 3, color = "black") +
       annotate(geom = "label", x = -134.826, y = 58.485, label = "2000m", size = 3, color = "black") +
+        annotate(geom = "text", x = -134.805, y = 58.473, label = "Favorite Channel", size = 4, color = "white") +
+          annotate(geom = "text", x = -134.80, y = 58.496, label = "Amalga Harbor", size = 4, color = "white") +
   scale_color_manual(values = c("coral3", "gold")) +
   scale_shape_manual(values = c(16,17)) +
   theme(
@@ -456,13 +218,6 @@ amalga_plot2 <- highest.zoom.plot +
         height = unit(0.8, "cm"), width = unit(0.8, "cm"),
         style = north_arrow_orienteering(fill = c("black", "white")))
 
-  # ) +
-  # guides(fill = guide_legend(label.position = "bottom",
-  #                            nrow = 1,
-  #                            keywidth = unit(0.5, "cm"),
-  #                            title.hjust = unit(0.2, "cm"),
-  #                            title.vjust = unit(0.4, "cm")))
-  #                            
 
 amalga_plot2
 ```
@@ -490,11 +245,7 @@ ak_plot <- ggplot(data = world) +
                   height = unit(0.2, "cm"),
                   pad_x = unit(0.25, "cm"),
                   pad_y = unit(0.25, "cm"),
-                  text_pad = unit(0.15, "cm")) +
-    annotation_north_arrow(location = "bl", which_north = "true", 
-        pad_x = unit(0.5, "cm"), pad_y = unit(0.8, "cm"),
-        height = unit(0.5, "cm"), width = unit(0.5, "cm"),
-        style = north_arrow_orienteering(fill = c("gray50", "gray20")))
+                  text_pad = unit(0.15, "cm"))
 
 ak_plot
 ```
@@ -502,8 +253,8 @@ ak_plot
 
 
 Combine the ak plot and the Amalga plot
-```{r}
-
+```{r multi-panel-plot-for-figure1}
+# make Figure 1
 (ak_plot | interm_p) / amalga_plot2 + plot_layout(nrow = 2, heights = c(2,3)) +
   plot_annotation(tag_levels = 'A') &
   theme(plot.tag = element_text(size = 8),
@@ -516,159 +267,4 @@ ggsave("pdf_outputs/amalga_combined_maps.png", width = 7, height = 7)
 
 
 
-
-
-
-
-## NOT IN USE BELOW THIS LINE
-
-
-
-## Bathy transect
-
-```{r}
-library(marmap)
-```
-
-
-```{r}
-# load datasets
-# 	data(nw.atlantic); as.bathy(nw.atlantic) -> atl
-# 	data(nw.atlantic.coast)
-# 
-# # Example 1. get.transect(), without use of locator()
-# 	get.transect(atl, -65, 43,-59,40) -> test ; plot(test[,3]~test[,2],type="l")
-# 	get.transect(atl, -65, 43,-59,40, distance=TRUE) -> test ; plot(test[,4]~test[,3],type="l")
-# 
-# # Example 2. get.transect(), without use of locator(); pretty plot
-# 	par(mfrow=c(2,1),mai=c(1.2, 1, 0.1, 0.1))
-# 	plot(atl, deep=-6000, shallow=-10, step=1000, lwd=0.5, col="grey50",drawlabels=TRUE)
-# 	lines(nw.atlantic.coast)
-# 
-# 	get.transect(atl, -75, 44,-46,32, loc=FALSE, dis=TRUE) -> test
-# 	points(test$lon,test$lat,type="l",col="blue",lwd=2,lty=2)
-# 	plotProfile(test)
-# 
-# # Example 3. get.transect(), with use of locator(); pretty plot
-# ## Not run: 
-# 	par(mfrow=c(2,1),mai=c(1.2, 1, 0.1, 0.1))
-# 	plot(atl, deep=-6000, shallow=-10, step=1000, lwd=0.5, col="grey50",drawlabels=TRUE)
-# 	lines(nw.atlantic.coast)
-# 	
-# 	get.transect(atl, loc=TRUE, dis=TRUE, col=2, lty=2) -> test
-# 	plotProfile(test)
-	
-## End(Not run)
-```
-
-
-Very cool, so if I can get my data into that format, I should be able to do something similar.
-
-```{r}
-# -134.7925, -134.8213, 58.4946, 58.4848
-# load dataset
-juneau <- getNOAA.bathy(lon1 = -140, lon2 = -130,
-lat1 = 60, lat2 = 55, resolution = 1)
-
-plot(juneau)
-summary(juneau)
-
-```
-
-
-```{r}
-# Creating a custom palette of blues
-blues <- c("lightsteelblue4", "lightsteelblue3",
-"lightsteelblue2", "lightsteelblue1")
-# Plotting the bathymetry with different colors for land and sea
-plot(juneau, image = TRUE, land = TRUE, lwd = 0.1,
-bpal = list(c(0, max(juneau), "grey"),
-c(min(juneau),0,blues)))
-# Making the coastline more visible
-plot(juneau, deep = 0, shallow = 0, step = 0,
-lwd = 0.4, add = TRUE)
-```
-
-zoom out even more to give perspective on location:
-
-```{r}
-juneau.out <- getNOAA.bathy(lon1 = -179, lon2 = -125,
-lat1 = 75, lat2 = 48, resolution = 8)
-
-plot(juneau.out, image = TRUE, land = TRUE, lwd = 0.1,
-bpal = list(c(0, max(juneau.out), "grey"),
-c(min(juneau.out),0,blues)))
-# Making the coastline more visible
-plot(juneau.out, deep = 0, shallow = 0, step = 0,
-lwd = 0.4, add = TRUE)
-```
-
-
-
-
-That doesn't look as good as the DEM, but hopefully it can give us the bathy transect.
-
-```{r}
-# Example 1. get.transect(), without use of locator()
-	get.transect(juneau, -134.8213, 58.4848, -134.7925, 58.4946) -> test ; plot(test[,3]~test[,2],type="l")
-	get.transect(juneau, -134.8213, 58.4848, -134.7925, 58.4946, distance=TRUE) -> test ; plot(test[,4]~test[,3],type="l")
-
-# Example 2. get.transect(), without use of locator(); pretty plot
-	par(mfrow=c(2,1),mai=c(1.2, 1, 0.1, 0.1))
-	plot(juneau, deep=-800, shallow=-10, step=1000, lwd=0.5, col="grey50",drawlabels=TRUE)
-	#lines(nw.atlantic.coast)
-
-	get.transect(juneau, -134.8213, 58.4848, -134.7925, 58.4946, loc=FALSE, dis=TRUE) -> test
-	points(test$lon,test$lat,type="l",col="blue",lwd=2,lty=2)
-	plotProfile(test)
-
-# Example 3. get.transect(), with use of locator(); pretty plot
-## Not run: 
-	par(mfrow=c(2,1),mai=c(1.2, 1, 0.1, 0.1))
-	plot(juneau, deep=-800, shallow=-10, step=1000, lwd=0.5, col="grey50",drawlabels=TRUE)
-	lines(juneau)
-
-	get.transect(juneau, loc=TRUE, dis=TRUE, col=2, lty=2) -> test
-	plotProfile(test)
-```
-```{r}
-bathy.df <- highest.res %>%
-  rename(longitude = x, latitude = y, depth = value)
-
-bathy.df %>%
-  write_csv("amalgaBathyDf.csv")
-
-read.bathy("amalgaBathyDF.csv", header = T)
-```
-
-
-```{r}
-# Example 1. get.transect(), without use of locator()
-	get.transect(highest.res, -134.8213, 58.4848, -134.7925, 58.4946) -> test ; plot(test[,3]~test[,2],type="l")
-	get.transect(highest.res, -134.8213, 58.4848, -134.7925, 58.4946, distance=TRUE) -> test ; plot(test[,4]~test[,3],type="l")
-
-# Example 2. get.transect(), without use of locator(); pretty plot
-	par(mfrow=c(2,1),mai=c(1.2, 1, 0.1, 0.1))
-	plot(test_spdf, deep=-800, shallow=-10, step=1000, lwd=0.5, col="grey50",drawlabels=TRUE)
-	#lines(nw.atlantic.coast)
-
-	get.transect(test_spdf, -134.8213, 58.4848, -134.7925, 58.4946, loc=FALSE, dis=TRUE) -> test
-	points(test$lon,test$lat,type="l",col="blue",lwd=2,lty=2)
-	plotProfile(test)
-
-# Example 3. get.transect(), with use of locator(); pretty plot
-## Not run: 
-	par(mfrow=c(2,1),mai=c(1.2, 1, 0.1, 0.1))
-	plot(test_spdf, deep=-800, shallow=-10, step=1000, lwd=0.5, col="grey50",drawlabels=TRUE)
-	lines(test_spdf)
-
-```
-
-
-
-
-
-
-Also this:
-https://stackoverflow.com/questions/47047623/projectraster-raster-projection-of-bathymetry-data-noaa-nc-in-the-pacific
-
+ß
