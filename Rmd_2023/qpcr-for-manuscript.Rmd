@@ -225,7 +225,7 @@ plotB_2021 <- combined_data %>%
 plotA_2021 + plotB_2021 + plot_layout(ncol = 1, heights = c(2,1)) +
   plot_annotation(tag_levels = "A")
 
-ggsave("pdf_outputs/Amalga2021_transect_and_CV.png", width = 5, height = 6)
+#ggsave("pdf_outputs/Amalga2021_transect_and_CV.png", width = 5, height = 6)
 ```
 
 Which samples are inhibited?
@@ -478,7 +478,7 @@ fig2.d <- merged_df_both_years %>%
 
 ```{r make-figure-2}
 # combine the pieces from the other plots
-plotA_2021 / (fig2.a | fig2.d) + plot_annotation(tag_levels = "A")
+(fig2.a | fig2.d)/plotA_2021 + plot_annotation(tag_levels = "A")
 
 ggsave("pdf_outputs/Figure2_tri.png", width = 9, height = 8)
 

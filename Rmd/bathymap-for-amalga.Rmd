@@ -183,11 +183,12 @@ fp <- am %>%
 ```
 
 ```{r intermed-bathy-map-for-panel}
-# juneau <- data.frame(lon = -134.5162,
-#                      lat = 58.33718)
+amalga <- data.frame(lon = -134.80,
+                     lat = 58.495)
 #                      
 # if only I could figure out how to annotate a ggoceanmap                   
 interm_p <- basemap(limits = c(-138, -132, 56, 59), bathymetry = T, bathy.style = "rcb", rotate = T) +
+  ggspatial::geom_spatial_point(data = amalga, aes(x = lon, y = lat), color = "red", size = 2) +
   labs(x = " ",
        y = " ") +
   theme(plot.margin = margin(r = 0.1, l = 0.1, t = 0.5, b = 0.5, unit = "cm")
