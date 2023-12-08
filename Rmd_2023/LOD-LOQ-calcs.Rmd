@@ -19,7 +19,7 @@ Using the USGS published code (Klymus et al.)
 # 2021 data had some of the same and some different standards, so better to keep this consistent for the calcs.
 # data generated from the code in qPCR-inhibition-tests.Rmd
 
-std2022_plates
+std2022_plates <- read_csv("std2022_plates_forLOD_calcs.csv")
 
 ```
 
@@ -657,3 +657,12 @@ The CV for the 10^6 data is really strange. I wonder if that's because there are
 
 
 This puts the LOD at 10 copies/reaction and the LOQ between 10 and 100 (~50 copies/reaction).
+
+```{r save-plot-outputs}
+Decay.Plot
+ggsave("pdf_outputs/LOD_decayPlot.png", width = 7, height = 5)
+
+ggOut
+ggsave("pdf_outputs/LOD_std_plot.png", width = 7, height = 5)
+```
+
