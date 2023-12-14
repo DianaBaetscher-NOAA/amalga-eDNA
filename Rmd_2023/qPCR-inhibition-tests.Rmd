@@ -1609,6 +1609,6 @@ std2022_plates$Cq <- as.numeric(std2022_plates$Cq)
   
 # combine 2022 and 2021 plates standards
 #std_combined <- bind_rows(std_for_lod, std2022_plates)
-
+write_csv(std2022_plates, "std2022_plates_forLOD_calcs.csv")
 ```
 

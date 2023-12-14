@@ -15,6 +15,8 @@ library(lubridate)
 library(hms)
 library(dplyr)
 library(ggplot2)
+library(RColorBrewer)
+library(lubridateExtras)
 
 ```
 
@@ -205,6 +207,9 @@ binned <- ctd.w.tides.dist %>%
   group_by(distance, tide, depth_m) %>% 
   summarize(av_tmp = mean(temp_c))
 
+# flip order so higher temps are at the top!
+binned
+
 tempplot <- ggplot(binned,aes(x=distance,y=-1*(depth_m))) +
   facet_grid(rows = vars(tide))+
   geom_contour_filled(aes(z=av_tmp), alpha = 0.8) +
@@ -217,7 +222,12 @@ tempplot <- ggplot(binned,aes(x=distance,y=-1*(depth_m))) +
        x = "Distance from hatchery pens (m)",
        fill = "Temperature (C)") +
   scale_x_continuous(expand = c(0,0)) +
-  scale_y_continuous(expand = c(0,0.05))
+  scale_y_continuous(expand = c(0,0.05)) +
+  scale_fill_brewer(palette = "Spectral", direction = -1,
+                    guide = guide_legend(reverse = T))
+  
+
+tempplot
 
 ggsave("pdf_outputs/ctdTemp10metersDistance.png", width = 8, height = 5)
 ```
@@ -275,7 +285,8 @@ ggsave("pdf_outputs/ctdTempProfile3metersDistance.pdf", width = 8, height = 5)
 ### Plotting a surface with salinity and longitude
 
 
-```{r}
+```{r salinity-plot}
+
 binnedSalinity <- ctd.w.tides.dist %>% 
     mutate(tide = ifelse(tide == "AM_incoming", "incoming tide (AM)", "outgoing tide (PM)")) %>%
   filter(depth_m < 10) %>%
@@ -283,19 +294,26 @@ binnedSalinity <- ctd.w.tides.dist %>%
   group_by(distance, tide, depth_m) %>% 
   summarize(av_salinity = mean(salinity))
 
-salplot <- ggplot(binnedSalinity,aes(x=distance,y=-1*(depth_m))) +
-  facet_grid(rows = vars(tide))+
-  geom_contour_filled(aes(z=av_salinity), alpha = 0.8) +
-    geom_point(size =0.1) +
-  theme_bw()+
-   theme(
-    axis.title.x = element_text(margin = margin(t=10)),
-    axis.title.y = element_text(margin = margin(r=10))) +
-  labs(y = "Depth (m)",
-       x = "Distance from hatchery pens (m)",
-       fill = "Salinity (PSU)") +
+# oranize colors
+mycolors <- colorRampPalette(brewer.pal(9, "Oranges"))(11)
+
+
+salplot <- ggplot(binnedSalinity, aes(x = distance, y = -1*(depth_m))) +
+  facet_grid(rows = vars(tide)) +
+  geom_contour_filled(aes(z = av_salinity), alpha = 0.8) +
+    geom_point(size = 0.1) +
+    theme_bw() +
+     theme(
+      axis.title.x = element_text(margin = margin(t=10)),
+      axis.title.y = element_text(margin = margin(r=10))) +
+      labs(y = "Depth (m)",
+           x = "Distance from hatchery pens (m)",
+           fill = "Salinity (PSU)") +
   scale_x_continuous(expand = c(0,0)) +
   scale_y_continuous(expand = c(0,0.05))
+
+
+salplot
 
 ggsave("pdf_outputs/ctdSalinity10metersDistance.png", width = 8, height = 5)
 ```
@@ -376,8 +394,8 @@ Tide data was obtained from the NOAA Tides website: tidesandcurrents.noaa.gov
 
 https://tidesandcurrents.noaa.gov/waterlevels.html?id=9452210&units=standard&bdate=20210510&edate=20210511&timezone=LST/LDT&datum=MLLW&interval=6&action=
 ```{r read-in-tide-data}
-tides <- read_csv("../data/tideData.csv",
-                  col_types = cols_only(Date=col_date("%m/%d/%Y"),
+tides <- read_csv("../data/JuneauTides_2021May.csv",
+                  col_types = cols_only(Date=col_date("%Y/%m/%d"),
                               `Time (LST/LDT)`=col_time("%H:%M"),
                               `Verified (ft)`=col_double())) 
 # fix variable names
@@ -394,10 +412,10 @@ tides.hour <- tides.renamed %>%
 ```
 Look at joining the tide data with the ctd data based on time
 
-```{r}
+```{r plot-tidal-cycle-2021}
 # install.packages("devtools")
-# library(devtools)
-# devtools::install_github("ellisvalentiner/lubridateExtras")
+#library(devtools)
+#devtools::install_github("ellisvalentiner/lubridateExtras")
 
 # from the ctd time stamp, I need to separate the date from the time
 ctd.w.tides.dist$time <- ymd_hms(ctd.w.tides.dist$time)
@@ -409,10 +427,9 @@ ctd.times <- ctd.w.tides.dist %>%
   mutate(hour = as_hms(hour)) 
   
 
-
-tides.hour %>%
-  filter(Date == "2021-05-10") %>%
-  left_join(., ctd.times, by = "hour") %>%
+tidePlot2021 <- tides.hour %>%
+  filter(Date == "2021-05-10" | Date == "2021-05-09") %>%
+  left_join(., ctd.times, by = c("hour", "ymd")) %>%
   ggplot(aes(x=newdate, y=height_ft, color = distance)) +
   geom_point() +
   theme_bw() +
@@ -425,12 +442,132 @@ tides.hour %>%
        color = "Distance from hatchery pens (m)") +
   scale_color_viridis_c(option = "plasma", direction = -1)
   
+tidePlot2021
 
 ggsave("pdf_outputs/tideCycleSampling.png", width = 8, height = 5)
+
+```
+
+```{r alternative-plot-2021}
+# removing-distance-and-just-using-sampling-period
+
+tidePlot2021 <- tides.hour %>%
+  filter(Date == "2021-05-10" | Date == "2021-05-09") %>%
+  left_join(., ctd.times, by = c("hour", "ymd")) %>%
+  mutate(sampling_period = ifelse(is.na(ctd_sample), "no", "yes")) %>%
+  ggplot(aes(x = newdate, y = height_ft, color = sampling_period)) +
+  geom_point() +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10)),
+    legend.title = element_text(margin = margin(b=10))) +
+  labs(y = "Tide height (ft)",
+       x = "Date-time",
+       color = "Sampling period") +
+  #scale_color_viridis_c(option = "plasma", direction = -1) +
+scale_color_manual(values = c("gray", "darkgreen"))
+ 
+tidePlot2021
+
 
 ```
 
 
 
 
+```{r import-tide-data-2022}
+# read in tide data from 2022
+tides2022 <- read_csv("../data/JuneauTides_2022May.csv",
+                  col_types = cols_only(Date=col_date("%Y/%m/%d"),
+                              `Time (LST/LDT)`=col_time("%H:%M"),
+                              `Verified (ft)`=col_double())) 
+# fix variable names
+tides.renamed2 <- tides2022 %>%
+  rename(time = `Time (LST/LDT)`, height_ft = `Verified (ft)`)
+
+# create a merged column with date and time to then round to the hour as in the CTD data
+tides.renamed2$newdate <- with(tides.renamed2, as.POSIXct(paste(Date, time), format="%Y-%m-%d %H:%M:%S"))
+
+tides.hour2 <- tides.renamed2 %>%
+  mutate(round_time = round_date(newdate, unit = "hours")) %>% # round time stamps to the hour
+  separate(round_time, into = c("ymd", "hour"), sep = " ") %>%
+  mutate(hour = as_hms(hour))
+```
+
+```{r CTD-data-2022}
+# import CTD data for May-5
+ctd.2022 <- read_csv("../data/2022ctdDataframe.csv")
+
+# grab the data for May 5 and one tide for data points for the map
+one.set.2022 <- ctd.2022 %>%
+  filter(str_detect(time, "2022-05-05")) %>%
+  #dplyr::select(time, ctd_sample, lat, long) %>%
+  unique() %>%
+  filter(!ctd_sample %in% c("163024", "191935", "175337", "185047")) %>%
+  mutate(Year = "2022")
+
+one.set.2022
+
+# from the ctd time stamp, I need to separate the date from the time
+one.set.2022$time <- ymd_hms(one.set.2022$time)
+
+ctd.times.2022 <- one.set.2022 %>%
+  mutate(round_time = round_date(time, unit = "hours")) %>% # round time stamps to the hour
+  separate(round_time, into = c("ymd", "hour"), sep = " ") %>%
+  mutate(hour = as_hms(hour))
+  
+```
+
+
+```{r plot-tidal-cycle-2022}
+tidePlot2022 <- tides.hour2 %>%
+  filter(Date == "2022-05-04" | Date == "2022-05-05") %>%
+  left_join(., ctd.times.2022, by = c("hour", "ymd")) %>%
+  mutate(sampling_period = ifelse(is.na(ctd_sample), "no", "yes")) %>%
+  ggplot(aes(x = newdate, y = height_ft, color = sampling_period)) +
+  geom_point() +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10)),
+    legend.title = element_text(margin = margin(b=10))) +
+  labs(y = "Tide height (ft)",
+       x = "Date-time",
+       color = "Sampling period") +
+  #scale_color_viridis_c(option = "plasma", direction = -1) +
+scale_color_manual(values = c("gray", "darkgreen"))
+
+  
+tidePlot2022
+
+ggsave("pdf_outputs/tideCycleSampling2022.png", width = 8, height = 5)
+
+```
+
+```{r}
+# double check the sampling to see if it overlaps slack tide?
+tides.hour2 %>%
+  filter(Date == "2022-05-05") %>%
+  left_join(., ctd.times.2022, by = c("hour", "ymd")) %>%
+  filter(tide == "AM_outgoing") %>%
+  mutate(sampling_period = ifelse(is.na(ctd_sample), "no", "yes")) %>%
+  filter(height_ft < min(height_ft)+1) %>%
+  ggplot(aes(x = long, y = lat, color = newdate)) +
+  geom_point()
+
+```
+Minimum tidal height was at 10:36; the parallel transect was sampled after 11 am, so it was as the tide turned.
+
+
+
+```{r combine-plots-both-years}
+# make supplemental figure
+tidePlot2021 + tidePlot2022 + 
+  plot_layout(ncol = 1) +
+  plot_annotation(tag_levels = "A")
+
+ggsave("pdf_outputs/SIfigure_tideCycle_bothYears.png", width = 8, height = 8)
+
+```
 

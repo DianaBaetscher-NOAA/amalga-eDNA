@@ -75,6 +75,15 @@ am %>%
   ggplot(aes(x = long, y = lat, label = id)) +
   geom_text()
 ```
+```{r}
+# minimum transect depth
+# lat = 58.49468	
+# long = -134.7925	
+
+test_df %>%
+  filter(x < -134.79, x > -134.793, y < 58.4948, y > 58.4946)
+
+```
 
 
 ```{r zoom-for-mapping-amalga}
@@ -223,7 +232,7 @@ amalga_plot2 <- highest.zoom.plot +
 amalga_plot2
 ```
 
-```{r}
+```{r context-map-pacific}
 world <- ne_countries(scale = "medium", returnclass = "sf")
 class(world)
 
