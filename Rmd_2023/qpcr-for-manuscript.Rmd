@@ -69,7 +69,7 @@ clean_meta %>%
 Patterns across samples of inhibition?? Look at metadata.
 
 Read in all combined data:
-```{r}
+```{r read-in-qPCR-data}
 file_path <- "../data/qpcr/"
 
 file_path %>%
@@ -148,16 +148,18 @@ inhibited_list <- diluted_plates_10x %>%
 
 ### Combined data from inhibited samples and uninhibited samples
 
-```{r}
+```{r qPCR-dataset-from-2021}
 combined_data <- all_plates2021 %>%
   anti_join(., inhibited_list) %>%
-  bind_rows(., diluted_plates_10x) %>%
+  bind_rows(., diluted_plates_10x) %>% 
   filter(Task == "UNKNOWN" & 
            `Target Name` == "Oke_COI") %>%
   #select(`Sample Name`, `Quantity Mean`, quant) %>%
   mutate(quant = ifelse(is.na(quant), Quantity, quant)) %>%
   #filter(!is.na(quant)) %>%
-  mutate(quant_per_ul = quant/2)
+  mutate(quant_per_ul = quant/2) %>%
+  mutate(quant_per_L = quant/0.0016) # add a variable for the DNA copy number per L of seawater
+# this maths out to 1L water x 0.4ml/5ml buffer x 2ul/100ul DNA = 1.6 mL
 
 combined_data %>%
   write_csv("data_for_fig2.csv")
@@ -166,7 +168,7 @@ plotA_2021 <- combined_data %>%
   left_join(., clean_meta, by = c("Sample Name" = "sample")) %>%
   filter(!is.na(tide) &
            distance != 100) %>%
-  ggplot(aes(x = distance, y = log10(quant_per_ul), color = tide, shape = tide)) +
+  ggplot(aes(x = distance, y = log10(quant_per_L), color = tide, shape = tide)) +
   geom_point(size = 2, alpha = 0.65) +
   geom_smooth(method = "lm", se = F) +
   #facet_grid(rows = vars(tide)) +
@@ -174,7 +176,7 @@ plotA_2021 <- combined_data %>%
    scale_shape_manual(values = c(16, 18)) +
   scale_color_manual(values = mycols) +
   labs(x = "Distance from pens (m)",
-       y = "DNA copy number/uL (log10)",
+       y = "DNA copies/L (log10)",
        color = "Tide",
        shape = "Tide") +
   theme(
@@ -198,7 +200,7 @@ tmp2 <- combined_data %>%
  tmp2 %>%
   filter(!is.na(tide) &
            distance != 100) %>%
-  ggplot(aes(x = distance, y = log10(quant_per_ul), color = tide)) +
+  ggplot(aes(x = distance, y = log10(quant_per_L), color = tide)) +
   geom_point(aes(shape = as.factor(SampDist)),size = 2, alpha = 0.65) +
   geom_smooth(method = "lm", se = F) +
   #facet_grid(rows = vars(tide)) +
@@ -206,7 +208,7 @@ tmp2 <- combined_data %>%
   #scale_shape_manual(values = c(16, 18)) +
   scale_color_manual(values = mycols) +
   labs(x = "Distance from pens (m)",
-       y = "DNA copy number/uL (log10)",
+       y = "DNA copies/L (log10)",
        color = "Tide",
        shape = "Water Sample") +
   theme(
@@ -236,32 +238,32 @@ Make a note of the LOD/LOQ in the figure legend, but include detections below th
 
 Make a plot of the CV for each distance:
 ```{r cv-by-distance-2021}
-plotB_2021 <- combined_data %>%
-  left_join(., clean_meta, by = c("Sample Name" = "sample")) %>%
-  filter(!is.na(tide) & 
-           !is.na(quant_per_ul) &
-           distance != 100) %>%
-  group_by(distance, tide) %>%
-  mutate(sd = sd(log10(quant_per_ul))) %>%
-  mutate(mean = mean(log10(quant_per_ul))) %>%
-  dplyr::select(distance, sd, mean, tide) %>%
-  unique() %>%
-  mutate(cv = sd/mean) %>%
-  ggplot(aes(x = distance, y = cv, color = tide, shape = tide)) +
-  geom_point(size = 2, alpha = 0.85) +
-  theme_bw() +
-   scale_shape_manual(values = c(16, 18)) +
-  scale_color_manual(values = mycols) +
-  labs(x = "Distance from pens (m)",
-       y = "CV",
-       color = "Tide",
-       shape = "Tide") +
-  theme(
-    axis.title.x = element_text(margin = margin(t = 5)),
-    axis.title.y = element_text(margin = margin(r = 5)),
-        #legend.position = c(0.8, 0.8)
-    legend.position = "none"
-  )
+# plotB_2021 <- combined_data %>%
+#   left_join(., clean_meta, by = c("Sample Name" = "sample")) %>%
+#   filter(!is.na(tide) & 
+#            !is.na(quant_per_ul) &
+#            distance != 100) %>%
+#   group_by(distance, tide) %>%
+#   mutate(sd = sd(log10(quant_per_ul))) %>%
+#   mutate(mean = mean(log10(quant_per_ul))) %>%
+#   dplyr::select(distance, sd, mean, tide) %>%
+#   unique() %>%
+#   mutate(cv = sd/mean) %>%
+#   ggplot(aes(x = distance, y = cv, color = tide, shape = tide)) +
+#   geom_point(size = 2, alpha = 0.85) +
+#   theme_bw() +
+#    scale_shape_manual(values = c(16, 18)) +
+#   scale_color_manual(values = mycols) +
+#   labs(x = "Distance from pens (m)",
+#        y = "CV",
+#        color = "Tide",
+#        shape = "Tide") +
+#   theme(
+#     axis.title.x = element_text(margin = margin(t = 5)),
+#     axis.title.y = element_text(margin = margin(r = 5)),
+#         #legend.position = c(0.8, 0.8)
+#     legend.position = "none"
+#   )
 
 #ggsave("pdf_outputs/Amalga2021_qPCR_by_tideCV.png", width = 5, height = 4)
 
@@ -274,12 +276,12 @@ fig2.a <- combined_data %>%
     filter(!is.na(tide) &
              distance != 100) %>%
   mutate(inhibited = ifelse(is.na(inhibited), "not inhibited", "inhibited")) %>%
-  ggplot(aes(x = distance, y = log10(quant_per_ul))) +
+  ggplot(aes(x = distance, y = log10(quant_per_L))) +
   geom_point(aes(color = inhibited), alpha = 0.8) +
   facet_grid(rows = vars(tide), labeller = label_both) +
   theme_bw() +
   labs(x = "Distance from pens (m)",
-       y = "DNA copy number/uL (log10)") +
+       y = "DNA copies/L (log10)") +
   theme(
     axis.title.x = element_text(margin = margin(t = 5)),
     axis.title.y = element_text(margin = margin(r = 5)),
@@ -323,7 +325,9 @@ plates2022 <- bind_rows(df_list1, .id = "plate")
 # multiple quantities by 10 because of 1:10 dilution factor
 # and 2 ul of diluted extract added to each well
 plates2022_10x <- plates2022 %>%
-  mutate(quant = (Quantity*10)/2)
+  mutate(quant = (Quantity*10)/2) %>%
+  mutate(quant_per_L = quant/0.0016) # add a variable for the DNA copy number per L of seawater
+# this maths out to 1L water x 0.4ml/5ml buffer x 2ul/100ul DNA = 1.6 mL (because the 10x dilution was dealt with in the line above)
 
 # list of samples
 list2022 <- plates2022_10x %>%
@@ -334,7 +338,7 @@ list2022 <- plates2022_10x %>%
 list2022
 ```
 
-```{r}
+```{r metadata-for-2022-samples}
 # read in 2022 metadata 
 meta2022 <- read_xlsx("../data/Amalga2022_cleanMetadata.xlsx")
 
@@ -366,7 +370,7 @@ list2022 %>%
 df2021 <- combined_data %>%
   filter(`Target Name` == "Oke_COI" &
            Task == "UNKNOWN") %>%
-  dplyr::select(`Sample Name`, CT, quant_per_ul)
+  dplyr::select(`Sample Name`, CT, quant_per_ul, quant_per_L)
   
   
 # 2022 data
@@ -374,7 +378,7 @@ df2022 <- plates2022_10x %>%
   filter(`Target Name` == "Oke_COI" &
            Task == "UNKNOWN") %>%
   rename(quant_per_ul = quant) %>%
-  dplyr::select(`Sample Name`, CT, quant_per_ul)
+  dplyr::select(`Sample Name`, CT, quant_per_ul, quant_per_L)
 
 
 # combine those
@@ -398,7 +402,7 @@ slim_m2022 <- meta2022 %>%
   mutate(tide = ifelse(time_of_day == "AM", "outgoing", "incoming")) 
   
 
-
+# combine metadata from both years
 metadata_both_years <- bind_rows(slim_m2021, slim_m2022) 
 ```
 
@@ -408,7 +412,7 @@ merged_df_both_years <- combo_df %>%
   filter(sample_date %in% c("2021_05_10", "2022_05_05")) %>%
   mutate(year = ifelse(sample_date == "2021_05_10", "2021", "2022")) %>%
   filter(distance_from_pens != 100) %>%
-    mutate(log_dna_ul = log10(quant_per_ul))
+    mutate(log_dna_L = log10(quant_per_L)) #### Here, I've changed the per ul (rxn volume) to per L of seawater sampled.
 
 merged_df_both_years %>%
   filter(year == "2022" & depth == 0)
@@ -462,14 +466,14 @@ for_mod2021 <- merged_df_both_years %>%
 
 
 
-ggdensity(for_mod2021$log_dna_ul)
-ggqqplot(for_mod2021$log_dna_ul)
+ggdensity(for_mod2021$log_dna_L)
+ggqqplot(for_mod2021$log_dna_L)
 
 ```
 
 Those visual inspection methods make the data appear normally distributed, but it's good to test this explicitly.
 ```{r test-for-normality}
-shapiro.test(for_mod2021$log_dna_ul)
+shapiro.test(for_mod2021$log_dna_L)
 
 ```
 Based on this, the data are not significantly different from normal.
@@ -478,10 +482,10 @@ Based on this, the data are not significantly different from normal.
 
 ```{r linear-regression-models}
 # model 1: copy number and distance
-mod1 <- lm(data = for_mod2021, log_dna_ul ~ distance_from_pens)
+mod1 <- lm(data = for_mod2021, log_dna_L ~ distance_from_pens)
 
 # model 2: distance and tide
-mod2 <- lm(data = for_mod2021, log_dna_ul ~ distance_from_pens + tide)
+mod2 <- lm(data = for_mod2021, log_dna_L ~ distance_from_pens + tide)
 
 # now compare the models with anova
 anova(mod1, mod2)
@@ -503,6 +507,14 @@ AICcmodavg::aictab(cand.set = models, modnames = mod.names)
 
 ```
 
+```{r line-321-quants}
+merged_df_both_years %>%
+  filter(year == "2022" &
+           distance_from_pens == 0) %>%
+  group_by(tide) %>%
+  filter(!is.na(quant_per_L)) %>%
+  summarise(mean(quant_per_L))
+```
 
 
 
@@ -512,7 +524,7 @@ fig2.d <- merged_df_both_years %>%
            year == 2021 &
           distance_from_pens != 100) %>%
   group_by(tide, distance_from_pens) %>%
-  mutate(detection = ifelse(is.na(quant_per_ul), 0, 1)) %>%
+  mutate(detection = ifelse(is.na(quant_per_L), 0, 1)) %>%
   summarise(n_detections = sum(detection)/9) %>%
   ggplot(aes(x = distance_from_pens, y = n_detections, fill = tide)) +
   geom_bar(stat = "identity") +
@@ -539,17 +551,94 @@ ggsave("pdf_outputs/Figure2_tri.png", width = 9, height = 8)
 
 ```
 
+#### Breakpoint analysis for detections in 2021
+
+Based on review feedback, I'll analyze the proportion of detection data from 2021 using a breakpoint (or segmented regression) analysis.
+
+following the analysis here: https://rpubs.com/MarkusLoew/12164
+
+```{r detections-for-breakpoint-initial-setup}
+detections2021 <- merged_df_both_years %>%
+ filter(!is.na(distance_from_pens) &
+           year == 2021 &
+          distance_from_pens != 100) %>%
+  group_by(tide, distance_from_pens) %>%
+  mutate(detection = ifelse(is.na(quant_per_L), 0, 1)) %>%
+  summarise(n_detections = sum(detection)/9) 
+
+# plot the detections
+p <- ggplot(detections2021, aes(x = distance_from_pens, y = n_detections, color = tide)) + geom_line()
+
+p
+```
+
+```{r detections-lm}
+# create a linear model
+detect.lm <- lm(n_detections ~ distance_from_pens + tide, data = detections2021)
+summary(detect.lm)
+
+```
+```{r}
+# a linear model with data for the part after 1000 m
+detect.lm2 <- lm(n_detections ~ distance_from_pens + tide, data = detections2021[detections2021$distance_from_pens > 1000, ])
+summary(detect.lm2)
+
+
+
+```
+```{r}
+# Extract te coefficients from the overall model
+my.coef <- coef(detect.lm)
+
+# add the regression line to the graph
+# setting the aesthetics to a constant - this provides a name that we can reference later when we add additional layers
+p <- p + geom_abline(intercept = my.coef[1], 
+                         slope = my.coef[2], 
+                     aes(colour = "overall"))
+p
+
+
+```
+```{r breakpoint-analysis}
+# -------------------
+# analyse breakpoints
+# -------------------
+# http://cran.r-project.org/doc/Rnews/Rnews_2008-1.pdf
+library(segmented)
+
+# have to provide estimates for breakpoints.
+# after looking a the data, 
+my.seg <- segmented(detect.lm, 
+                    seg.Z = ~ distance_from_pens, 
+                    psi = list(distance_from_pens = c(1200)))
+
+# When not providing estimates for the breakpoints "psi = NA" can be used.
+# The number of breakpoints that will show up is not defined
+#my.seg <- segmented(my.lm, 
+#                    seg.Z = ~ DistanceMeters, 
+#                    psi = NA)
+
+# display the summary
+summary(my.seg)
+
+
+```
+
+
+
+
+
 ```{r make-si-figure-comparing-conc-across-years}
 merged_df_both_years %>%
   filter(transect == "perpendicular" &
            depth == 0) %>%
-  ggplot(aes(x = distance_from_pens, y = log_dna_ul, color = year)) +
+  ggplot(aes(x = distance_from_pens, y = log_dna_L, color = year)) +
   geom_point() +
   facet_grid(rows = vars(tide)) +
   theme_bw() +
   scale_color_manual(values = c("darksalmon", "dodgerblue")) +
   labs(x = "Distance from pens (m)",
-        y = "DNA copy number/uL (log10)",
+        y = "DNA copies/L (log10)",
        color = "Sampling year") +
   theme(
     axis.title.x = element_text(margin = margin(t = 5)),
@@ -573,6 +662,8 @@ df_for_3d <- merged_df_both_years %>%
   mutate(depth = ifelse(depth != 0, -1*depth, depth))
 
 ```
+
+
 ```{r detections-in-3d-space}
 # LOD vs. LOQ
 df_for_3d %>%
@@ -585,33 +676,35 @@ df_for_3d %>%
 
 
 
-```{r plots-for-depth-figure}
+```{r plots-for-depth-figure-v1}
 # I want to explicitly plot NAs on here to show where we sampled but didn't have data
-df_for_3d %>%
-  mutate(depth = -1*depth) %>%
-  filter(!is.na(depth)) %>%
-  ggplot(aes(x = x_dist, y = y_dist, size = log_quant, color = tide, shape = tide)) +
-  geom_jitter(alpha = 0.5, width = 100, height = 100) +
-  theme_bw() +
-  facet_grid(rows = vars(depth), labeller = label_both) +
-  labs(x = "Perpendicular transect (meters from pens)",
-       y = "Parallel transect (SE-NW, meters from 1000 m midpoint)",
-       color = "Tide",
-       shape = "Tide",
-       size = "DNA copies/uL\n(log10)") +
-  theme(
-    axis.title.x = element_text(margin = margin(t = 10)),
-    axis.title.y = element_text(margin = margin(r = 10))
-  ) +
-  scale_shape_manual(values = c(16, 18), na.value = 1) +
-  scale_color_manual(values = mycols) +
-  guides(color = guide_legend(override.aes = list(size = 5)))
-
-ggsave("pdf_outputs/depth_transects2022.png", width = 6, height = 7)
+# df_for_3d %>%
+#   mutate(depth = -1*depth) %>%
+#   filter(!is.na(depth)) %>%
+#   ggplot(aes(x = x_dist, y = y_dist, size = log_quant, color = tide, shape = tide)) +
+#   geom_jitter(alpha = 0.5, width = 100, height = 100) +
+#   theme_bw() +
+#   facet_grid(rows = vars(depth), labeller = label_both) +
+#   labs(x = "Perpendicular transect (meters from pens)",
+#        y = "Parallel transect (SE-NW, meters from 1000 m midpoint)",
+#        color = "Tide",
+#        shape = "Tide",
+#        size = "DNA copies/uL\n(log10)") +
+#   theme(
+#     axis.title.x = element_text(margin = margin(t = 10)),
+#     axis.title.y = element_text(margin = margin(r = 10))
+#   ) +
+#   scale_shape_manual(values = c(16, 18), na.value = 1) +
+#   scale_color_manual(values = mycols) +
+#   guides(color = guide_legend(override.aes = list(size = 5)))
+# 
+# ggsave("pdf_outputs/depth_transects2022.png", width = 6, height = 7)
 
 ```
 
 ```{r explicitly-plot-NAs}
+library(viridis)
+
 # I want to explicitly plot NAs on here to show where we sampled but didn't have data
 tmp <- df_for_3d %>%
   mutate(depth = -1*depth) %>%
@@ -629,16 +722,14 @@ tmp<-tmp %>%
                             `2` = 100))
 tmp %>%
   ggplot() +
-  #geom_jitter(aes(x = x_dist, y = y_dist, color = log_quant), size = 1, alpha = 0.9, width = 110, height = 90) +
-  geom_point(aes(x = x_dist+xJit, y = y_dist+yJit, color = log_quant), size = 1, alpha = 0.9, width = 110, height = 90) +
-  geom_point(data = tmp[is.na(tmp$log_quant),], aes(x_dist, y_dist), color = "gray", shape = 1, size = 3) +
+  geom_point(aes(x = x_dist+xJit, y = y_dist+yJit, color = log_dna_L), size = 1, alpha = 0.9, width = 110, height = 90) +
+  geom_point(data = tmp[is.na(tmp$log_dna_L),], aes(x_dist, y_dist), color = "gray", shape = 1, size = 3) +
   theme_bw() +
   facet_grid(rows = vars(depth), cols = vars(tide), labeller = label_both) +
-  scale_color_gradient(na.value = NA) +
-  #scale_shape_manual(na.value = 2) +
+  scale_color_viridis_c(option="plasma", na.value = NA, direction = -1) +
   labs(x = "Meters from pens along perpendicular transect",
        y = "Meters along parallel transect from midpoint (SE-NW)",
-       color = "DNA copies/uL\n(log10)") +
+       color = "DNA copies/L\n(log10)") +
   theme(
     axis.title.x = element_text(margin = margin(t = 10)),
     axis.title.y = element_text(margin = margin(r = 10))
@@ -666,86 +757,86 @@ df_for_3d %>%
 
 Relationship between qPCR detections and depth
 ```{r}
-df_for_3d %>%
-  mutate(depth = -1*depth) %>%
-  filter(!is.na(depth) &
-           transect == "perpendicular") %>%
-  ggplot(aes(x = depth, y = log_quant, color = log_quant)) +
-  geom_point() +
-  facet_grid(rows = vars(tide), cols = vars(transect)) +
-  scale_x_continuous(breaks = c(0, 5, 10)) +
-  theme_bw() +
-  theme(
-    axis.title.x = element_text(margin = margin(t = 10)),
-    axis.title.y = element_text(margin = margin(r = 10))
-  ) +
-    scale_color_gradient(na.value = "gray") +
-  guides(color = guide_legend(override.aes = list(size = 5))) +
-   labs(x = "Depth (m)",
-       y = "DNA copies/uL\n(log10)",
-       color = "Tide",
-       shape = "Tide",
-       size = "DNA copies/uL\n(log10)")
+# df_for_3d %>%
+#   mutate(depth = -1*depth) %>%
+#   filter(!is.na(depth) &
+#            transect == "perpendicular") %>%
+#   ggplot(aes(x = depth, y = log_dna_L, color = log_quant)) +
+#   geom_point() +
+#   facet_grid(rows = vars(tide), cols = vars(transect)) +
+#   scale_x_continuous(breaks = c(0, 5, 10)) +
+#   theme_bw() +
+#   theme(
+#     axis.title.x = element_text(margin = margin(t = 10)),
+#     axis.title.y = element_text(margin = margin(r = 10))
+#   ) +
+#     scale_color_gradient(na.value = "gray") +
+#   guides(color = guide_legend(override.aes = list(size = 5))) +
+#    labs(x = "Depth (m)",
+#        y = "DNA copies/uL\n(log10)",
+#        color = "Tide",
+#        shape = "Tide",
+#        size = "DNA copies/L\n(log10)")
 
 ```
 Is it worth fitting a linear model to this?
 
 ```{r perpendicular-depths}
-dis22p <- df_for_3d %>%
-  #mutate(depth = -1*depth) %>%
-  filter(!is.na(depth) &
-           transect == "perpendicular") %>%
-  ggplot(aes(x = x_dist, y = depth, size = log_quant, color = tide, shape = tide)) +
-  geom_jitter(alpha = 0.5, width = 70, height = 0.5) +
-  facet_grid(rows = vars(tide), cols = vars(transect)) +
-  #geom_smooth(method = "lm", se = F) +
-  theme_bw() +
-  theme(
-    axis.title.x = element_text(margin = margin(t = 10)),
-    axis.title.y = element_text(margin = margin(r = 10))
-  ) +
-  scale_shape_manual(values = c(16, 18)) +
-  scale_color_manual(values = mycols) +
-  scale_y_continuous(breaks = c(0, -5, -10)) +
-   guides(color = guide_legend(override.aes = list(size = 5))) +
-   labs(y = "Depth (m)",
-       x = "Distance from pens (m)",
-       color = "Tide",
-       shape = "Tide",
-       size = "DNA copies/uL\n(log10)")
-
-ggsave("pdf_outputs/depth_by_distance.png", width = 6, height = 5)
+# dis22p <- df_for_3d %>%
+#   #mutate(depth = -1*depth) %>%
+#   filter(!is.na(depth) &
+#            transect == "perpendicular") %>%
+#   ggplot(aes(x = x_dist, y = depth, size = log_quant, color = tide, shape = tide)) +
+#   geom_jitter(alpha = 0.5, width = 70, height = 0.5) +
+#   facet_grid(rows = vars(tide), cols = vars(transect)) +
+#   #geom_smooth(method = "lm", se = F) +
+#   theme_bw() +
+#   theme(
+#     axis.title.x = element_text(margin = margin(t = 10)),
+#     axis.title.y = element_text(margin = margin(r = 10))
+#   ) +
+#   scale_shape_manual(values = c(16, 18)) +
+#   scale_color_manual(values = mycols) +
+#   scale_y_continuous(breaks = c(0, -5, -10)) +
+#    guides(color = guide_legend(override.aes = list(size = 5))) +
+#    labs(y = "Depth (m)",
+#        x = "Distance from pens (m)",
+#        color = "Tide",
+#        shape = "Tide",
+#        size = "DNA copies/uL\n(log10)")
+# 
+# ggsave("pdf_outputs/depth_by_distance.png", width = 6, height = 5)
 ```
 
 
 
 ```{r parallel-depths}
-df_for_3d %>%
-  #mutate(depth = -1*depth) %>%
-  mutate(transect = ifelse(distance_from_pens == 1000 & transect == "perpendicular", "parallel", transect)) %>%
-  mutate(y_dist = ifelse(distance_from_pens == 1000 & transect == "parallel", 0, y_dist)) %>%
-  filter(!is.na(depth) &
-           str_detect(transect, "parallel")) %>%
-  ggplot(aes(x = y_dist, y = depth, size = log_quant, color = tide, shape = tide)) +
-  geom_jitter(alpha = 0.5, width = 25, height = 0.3) +
-  #facet_grid(rows = vars(tide), cols = vars(transect)) +
-  #geom_smooth(method = "lm", se = F) +
-  theme_bw() +
-  theme(
-    axis.title.x = element_text(margin = margin(t = 10)),
-    axis.title.y = element_text(margin = margin(r = 10))
-  ) +
-  scale_shape_manual(values = c(16, 18)) +
-  scale_color_manual(values = mycols) +
-  scale_y_continuous(breaks = c(0, -5, -10)) +
-   guides(color = guide_legend(override.aes = list(size = 5))) +
-   labs(y = "Depth (m)",
-       x = "Distance from pens (m)",
-       color = "Tide",
-       shape = "Tide",
-       size = "DNA copies/uL\n(log10)")
-
-ggsave("pdf_outputs/depth_by_distance_parallel.png", width = 6, height = 5)
+# df_for_3d %>%
+#   #mutate(depth = -1*depth) %>%
+#   mutate(transect = ifelse(distance_from_pens == 1000 & transect == "perpendicular", "parallel", transect)) %>%
+#   mutate(y_dist = ifelse(distance_from_pens == 1000 & transect == "parallel", 0, y_dist)) %>%
+#   filter(!is.na(depth) &
+#            str_detect(transect, "parallel")) %>%
+#   ggplot(aes(x = y_dist, y = depth, size = log_quant, color = tide, shape = tide)) +
+#   geom_jitter(alpha = 0.5, width = 25, height = 0.3) +
+#   #facet_grid(rows = vars(tide), cols = vars(transect)) +
+#   #geom_smooth(method = "lm", se = F) +
+#   theme_bw() +
+#   theme(
+#     axis.title.x = element_text(margin = margin(t = 10)),
+#     axis.title.y = element_text(margin = margin(r = 10))
+#   ) +
+#   scale_shape_manual(values = c(16, 18)) +
+#   scale_color_manual(values = mycols) +
+#   scale_y_continuous(breaks = c(0, -5, -10)) +
+#    guides(color = guide_legend(override.aes = list(size = 5))) +
+#    labs(y = "Depth (m)",
+#        x = "Distance from pens (m)",
+#        color = "Tide",
+#        shape = "Tide",
+#        size = "DNA copies/uL\n(log10)")
+# 
+# ggsave("pdf_outputs/depth_by_distance_parallel.png", width = 6, height = 5)
 
 ```
 % of detections in surface samples vs. at depth?
@@ -768,7 +859,7 @@ for_anova <- merged_df_both_years %>%
   group_by(depth, tide) 
 
 for_anova %>%
-  summarise(sd = sd(log_dna_ul))
+  summarise(sd = sd(log_dna_L))
   
 
 for_anova %>%
@@ -787,7 +878,7 @@ for_anova$tide <- as.factor(for_anova$tide)
 # form
 # aov(response ~ factor A/ factor B)
 
-depth.tide <- aov(for_anova$log_dna_ul ~ for_anova$tide / for_anova$depth, data = for_anova)
+depth.tide <- aov(for_anova$log_dna_L ~ for_anova$tide / for_anova$depth, data = for_anova)
 summary(depth.tide)
 
 tukey.depth.tide <- TukeyHSD(depth.tide, conf.level = 0.95)
@@ -804,10 +895,10 @@ plot(TukeyHSD(depth.tide, conf.level = 0.95), las = 2)
 
 ```{r boxplot-for-tide-and-depth}
 box_plot_df <- for_anova %>%
-  mutate(log_dna_ul = ifelse(log_dna_ul < 0, 0, log_dna_ul))
+  mutate(log_dna_L = ifelse(log_dna_L < 0, 0, log_dna_L))
   
 
-d.boxp <- ggplot(box_plot_df, aes(x=factor(depth), y=log_dna_ul, fill=tide)) +
+d.boxp <- ggplot(box_plot_df, aes(x=factor(depth), y=log_dna_L, fill=tide)) +
   geom_boxplot() +
   theme_minimal() +
   scale_fill_manual(values = c("coral3", "cadetblue4")) +
@@ -818,7 +909,7 @@ d.boxp <- ggplot(box_plot_df, aes(x=factor(depth), y=log_dna_ul, fill=tide)) +
     #legend.position = c(0.85,0.85)
   ) +
    labs(x = "Depth (m)",
-       y = "DNA copies/uL(log10)",
+       y = "DNA copies/L(log10)",
        fill = "Tide")
 
 ggsave("pdf_outputs/depth_tide_boxplot.png", height = 3, width = 5)
@@ -837,32 +928,31 @@ ggsave("pdf_outputs/depth_tide_boxplot.png", height = 3, width = 5)
 
 Because nearly all non-surface samples were below the LOQ, let's switch this to an analysis using detections rather than DNA concentration.
 
-```{r}
+```{r detections-by-tide-at-any-quantity}
 for_anova %>%
   mutate(detection = ifelse(quant_per_ul > 0, 1,0)) %>%
   group_by(depth, tide) %>%
   summarise(n_detections = sum(detection)) %>%
   mutate(prop_detections = n_detections/9) %>%
   ggplot(aes(x = depth, y = prop_detections, fill = tide)) +
-  geom_bar(stat = "identity", position = "dodge") +
+  geom_bar(stat = "identity", width = 0.5, position = position_dodge(width=0.6)) +
   theme_minimal() +
   scale_fill_manual(values = c("coral3", "cadetblue4")) +
   theme_bw() +
   theme(
-    axis.title.x = element_text(margin = margin(t = 10)),
-    axis.title.y = element_text(margin = margin(r = 10)),
-    legend.position = c(0.8,0.8)) +
+    axis.title.x = element_text(margin = margin(t = 5)),
+    axis.title.y = element_text(margin = margin(r = 5)),
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 8),
+    legend.position = c(0.75,0.75)) +
    labs(x = "Depth (m)",
        y = "Proportion of eDNA detections",
        fill = "Tide") +
    scale_y_continuous(expand = c(0,0)) +
   scale_x_discrete(expand = c(0,0))
-  
 
-ggsave("pdf_outputs/depth_detections_by_tide.png", width = 4, height = 3)
+ggsave("pdf_outputs/depth_detections_by_tide.png", width = 3.2, height = 2.8)
 ```
-
-
 
 
 

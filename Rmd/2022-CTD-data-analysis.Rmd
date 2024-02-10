@@ -323,7 +323,7 @@ meta <- read_xlsx("../data/Amalga2022_cleanMetadata.xlsx")
 dist <- meta %>%
   filter(Sample_Date == "2022_05_05") %>%
   arrange(distance_from_pens) %>%
-  select(distance_from_pens, transect) %>%
+  dplyr::select(distance_from_pens, transect) %>%
   unique() %>%
   arrange(desc(transect), distance_from_pens)
 
@@ -352,11 +352,11 @@ meta.grps <- meta %>%
     mutate(grp = ifelse(transect == "perpendicular" & distance_from_pens == "1000", 6, grp)) %>%
     mutate(grp = ifelse(transect == "perpendicular" & distance_from_pens == "500", 7, grp)) %>%
       mutate(grp = ifelse(transect == "perpendicular" & distance_from_pens == "0", 9, grp)) %>%
-      mutate(grp = ifelse(transect != "perpendicular" & parallel_transect == "-1000", 1, grp)) %>%
-        mutate(grp = ifelse(transect != "perpendicular" & parallel_transect == "-500", 3, grp)) %>%
-          mutate(grp = ifelse(transect != "perpendicular" & parallel_transect == "500", 8, grp)) %>%
-            mutate(grp = ifelse(transect != "perpendicular" & parallel_transect == "1000", 10, grp)) %>%
-              mutate(grp = ifelse(transect != "perpendicular" & transect == "background", 4, grp)) 
+      mutate(grp = ifelse(transect == "parallel_B3", 1, grp)) %>%
+        mutate(grp = ifelse(transect == "parallel_B2", 3, grp)) %>%
+          mutate(grp = ifelse(transect == "parallel_T2", 8, grp)) %>%
+            mutate(grp = ifelse(transect == "parallel_T3", 10, grp)) %>%
+              mutate(grp = ifelse(transect == "background", 4, grp)) 
 
 meta.grps$grp <- as.character(meta.grps$grp)
 ```
@@ -368,6 +368,9 @@ meta.ctd.df <- ctd.grp.w.data %>%
   left_join(., meta.grps, by = c("grp_id" = "grp")) %>%
   rename(sample_code = `Sample Code`)
 
+meta.ctd.df %>%
+  filter(!is.na(distance_from_pens)) %>%
+  write_csv("csv_outputs/2022_ctd_grp_metadata.csv")
 ```
 
 

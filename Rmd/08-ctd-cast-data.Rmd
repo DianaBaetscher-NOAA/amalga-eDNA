@@ -371,17 +371,17 @@ density1 <- ctd.w.tides.dist %>%
   group_by(distance, tide, depth_m) %>% 
   summarize(av_density = mean(density)) # the avg needs to be taken for proper plotting in this way.
 
-ggplot(density1,aes(x=distance,y=-1*(depth_m))) +
-  facet_grid(rows = vars(tide))+
-  geom_contour_filled(aes(z=density), alpha = 0.8) +
-    geom_point(size =0.1) +
-  theme_bw()+
-   theme(
-    axis.title.x = element_text(margin = margin(t=10)),
-    axis.title.y = element_text(margin = margin(r=10))) +
-  labs(y = "Depth (m)",
-       x = "Distance from hatchery pens (m)",
-       fill = "Density (kg/m^3)")
+# ggplot(density1,aes(x=distance,y=-1*(depth_m))) +
+#   facet_grid(rows = vars(tide))+
+#   geom_contour_filled(aes(z=density), alpha = 0.8) +
+#     geom_point(size =0.1) +
+#   theme_bw()+
+#    theme(
+#     axis.title.x = element_text(margin = margin(t=10)),
+#     axis.title.y = element_text(margin = margin(r=10))) +
+#   labs(y = "Depth (m)",
+#        x = "Distance from hatchery pens (m)",
+#        fill = "Density (kg/m^3)")
 
 #ggsave("pdf_outputs/ctdTemp10metersDistance.pdf", width = 8, height = 5)
 ```
@@ -440,7 +440,7 @@ tidePlot2021 <- tides.hour %>%
   labs(y = "Tide height (ft)",
        x = "Date-time",
        color = "Distance from hatchery pens (m)") +
-  scale_color_viridis_c(option = "plasma", direction = -1)
+  scale_color_viridis_c(option = "plasma", direction = 1)
   
 tidePlot2021
 
@@ -451,24 +451,24 @@ ggsave("pdf_outputs/tideCycleSampling.png", width = 8, height = 5)
 ```{r alternative-plot-2021}
 # removing-distance-and-just-using-sampling-period
 
-tidePlot2021 <- tides.hour %>%
-  filter(Date == "2021-05-10" | Date == "2021-05-09") %>%
-  left_join(., ctd.times, by = c("hour", "ymd")) %>%
-  mutate(sampling_period = ifelse(is.na(ctd_sample), "no", "yes")) %>%
-  ggplot(aes(x = newdate, y = height_ft, color = sampling_period)) +
-  geom_point() +
-  theme_bw() +
-  theme(
-    axis.title.x = element_text(margin = margin(t=10)),
-    axis.title.y = element_text(margin = margin(r=10)),
-    legend.title = element_text(margin = margin(b=10))) +
-  labs(y = "Tide height (ft)",
-       x = "Date-time",
-       color = "Sampling period") +
-  #scale_color_viridis_c(option = "plasma", direction = -1) +
-scale_color_manual(values = c("gray", "darkgreen"))
- 
-tidePlot2021
+# tidePlot2021 <- tides.hour %>%
+#   filter(Date == "2021-05-10" | Date == "2021-05-09") %>%
+#   left_join(., ctd.times, by = c("hour", "ymd")) %>%
+#   mutate(sampling_period = ifelse(is.na(ctd_sample), "no", "yes")) %>%
+#   ggplot(aes(x = newdate, y = height_ft, color = sampling_period)) +
+#   geom_point() +
+#   theme_bw() +
+#   theme(
+#     axis.title.x = element_text(margin = margin(t=10)),
+#     axis.title.y = element_text(margin = margin(r=10)),
+#     legend.title = element_text(margin = margin(b=10))) +
+#   labs(y = "Tide height (ft)",
+#        x = "Date-time",
+#        color = "Sampling period") +
+#   #scale_color_viridis_c(option = "plasma", direction = -1) +
+# scale_color_manual(values = c("gray", "darkgreen"))
+#  
+# tidePlot2021
 
 
 ```
@@ -517,6 +517,14 @@ ctd.times.2022 <- one.set.2022 %>%
   separate(round_time, into = c("ymd", "hour"), sep = " ") %>%
   mutate(hour = as_hms(hour))
   
+# read in metadata for distance from pens associated with ctd times
+dist_time2022 <- read_csv("csv_outputs/2022_ctd_grp_metadata.csv") %>%
+  dplyr::select(ctd_sample, tide, distance_from_pens, sample_code) %>%
+  unique()
+
+# add distance to ctd_sample number
+ctd.times.2022 <- ctd.times.2022 %>%
+  left_join(., dist_time2022, by = "ctd_sample")
 ```
 
 
@@ -545,6 +553,28 @@ ggsave("pdf_outputs/tideCycleSampling2022.png", width = 8, height = 5)
 
 ```
 
+
+```{r mapping-distance-from-pens-onto-tides}
+tides.hour2 %>%
+  filter(Date == "2022-05-04" | Date == "2022-05-05") %>%
+  left_join(., ctd.times.2022, by = c("hour", "ymd")) %>%
+  mutate(sampling_period = ifelse(is.na(ctd_sample), "no", "yes")) %>%
+  ggplot(aes(x = newdate, y = height_ft, color = distance_from_pens)) +
+  geom_point() +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text(margin = margin(t=10)),
+    axis.title.y = element_text(margin = margin(r=10)),
+    legend.title = element_text(margin = margin(b=10))) +
+  labs(y = "Tide height (ft)",
+       x = "Date-time",
+       color = "Distance from hatchery pens (m)") +
+   scale_color_viridis_c(option = "plasma", direction = 1)
+  
+```
+
+
+
 ```{r}
 # double check the sampling to see if it overlaps slack tide?
 tides.hour2 %>%
@@ -567,7 +597,7 @@ tidePlot2021 + tidePlot2022 +
   plot_layout(ncol = 1) +
   plot_annotation(tag_levels = "A")
 
-ggsave("pdf_outputs/SIfigure_tideCycle_bothYears.png", width = 8, height = 8)
+ggsave("pdf_outputs/SIfigure_tideCycle_bothYears_v2.png", width = 8, height = 8)
 
 ```
 
